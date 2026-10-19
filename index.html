@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Warehouse Commander: Ranked Play</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>
+/* Layout: a night-shift dock HUD. Player panel + crew leaderboard, view nav, tier tabs, quest cards with a tier stripe. One committed dark world. */
+:root {
+  color-scheme: dark;
+  --bg: #12161d; --panel: #1a2029; --panel-2: #222a35; --well: #0c0f14; --line: #2f3a48; --line-hi: #46546a;
+  --fg: #e8ecf1; --muted: #93a0b0; --ink: #1a0e02;
+  --safety: #ff8a1f; --urgent: #ff5a4e; --main: #ffb547; --side: #4fc3d9; --lore: #a99bf0; --done: #5fd38a; --intel: #7db7ff;
+  --f-display: "Chakra Petch", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-pixel: "Silkscreen", ui-monospace, "Courier New", monospace;
+}
+* { box-sizing: border-box; }
+html, body { background: var(--bg); }
+body { margin: 0; color: var(--fg); font-family: var(--f-body); font-size: 15px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: calc(12px + env(safe-area-inset-top, 0px)) calc(56px + env(safe-area-inset-bottom, 0px)); }
+.wrap { max-width: 1040px; margin: 0 auto; display: grid; gap: 16px; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible { outline: 2px solid var(--safety); outline-offset: 2px; }
+a { color: var(--intel); }
+[hidden] { display: none !important; }
+
+/* ---------- Header ---------- */
+.userbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); min-height: 30px; flex-wrap: wrap; }
+.userbar .right { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.userbar span { overflow-wrap: anywhere; }
+.titlebar { display: flex; justify-content: space-between; align-items: end; gap: 12px; flex-wrap: wrap; }
+.titlebar h1 { margin: 0; font-family: var(--f-display); font-weight: 700; font-size: clamp(26px, 4.4vw, 38px); text-transform: uppercase; letter-spacing: .03em; line-height: 1.02; }
+.titlebar h1 span { color: var(--safety); }
+.sub { font-family: var(--f-pixel); font-size: 11px; color: var(--muted); letter-spacing: .08em; }
+.team { display: flex; gap: 8px; flex-wrap: wrap; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 6px 12px; min-width: 74px; text-align: center; }
+.stat b { display: block; font-family: var(--f-display); font-size: 22px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.stat span { font-family: var(--f-pixel); font-size: 10px; color: var(--muted); letter-spacing: .06em; }
+.stat.hot b { color: var(--urgent); } .stat.good b { color: var(--done); } .stat.intel b { color: var(--intel); }
+
+/* ---------- Views nav ---------- */
+.views { display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+.view { font-family: var(--f-pixel); font-size: 12px; letter-spacing: .08em; background: none; border: 1px solid transparent; border-radius: 4px; color: var(--muted); padding: 8px 12px; cursor: pointer; }
+.view:hover { color: var(--fg); }
+.view[aria-current="page"] { color: var(--fg); border-color: var(--line); background: var(--panel); box-shadow: inset 0 -3px 0 var(--safety); }
+
+/* ---------- HUD + leaderboard ---------- */
+.top { display: grid; grid-template-columns: 1.35fr 1fr; gap: 14px; }
+.hud, .board { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.hud::before, .board::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 8px; background: repeating-linear-gradient(-45deg, var(--safety) 0 12px, var(--bg) 12px 24px); }
+.hud { display: grid; grid-template-columns: auto 1fr; gap: 16px 18px; align-items: center; padding: 22px 20px 18px; }
+.avatar { width: 78px; height: 78px; border-radius: 6px; background: var(--panel-2); border: 2px solid var(--pc, var(--safety)); display: grid; place-items: center; text-align: center; box-shadow: 0 0 0 4px color-mix(in srgb, var(--pc, var(--safety)) 14%, transparent); }
+.avatar small { font-family: var(--f-pixel); font-size: 10px; color: var(--muted); letter-spacing: .08em; display: block; }
+.avatar b { font-family: var(--f-display); font-size: 34px; line-height: 1; color: var(--pc, var(--safety)); }
+.player { min-width: 0; display: grid; gap: 2px; }
+.eyebrow { font-family: var(--f-pixel); font-size: 10px; color: var(--muted); letter-spacing: .1em; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.player h2 { margin: 0; font-family: var(--f-display); font-weight: 700; font-size: 24px; line-height: 1.15; text-transform: uppercase; overflow-wrap: anywhere; }
+.role { color: var(--muted); font-size: 14px; }
+.xp { margin-top: 8px; display: grid; gap: 4px; }
+.xp-bar { height: 14px; background: var(--well); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.xp-fill { height: 100%; width: 0%; background: repeating-linear-gradient(90deg, var(--pc, var(--safety)) 0 10px, color-mix(in srgb, var(--pc, var(--safety)) 70%, #fff) 10px 12px); transition: width .6s cubic-bezier(.2,.8,.2,1); }
+.xp-label { font-family: var(--f-pixel); font-size: 10px; color: var(--muted); letter-spacing: .06em; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.hud-row { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.streak { font-family: var(--f-pixel); font-size: 11px; letter-spacing: .06em; color: var(--main); }
+.badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.badge { font-family: var(--f-pixel); font-size: 9px; letter-spacing: .06em; padding: 4px 6px; border-radius: 3px; border: 1px solid color-mix(in srgb, var(--main) 50%, transparent); color: var(--main); background: color-mix(in srgb, var(--main) 8%, transparent); }
+.badge.locked { border-color: var(--line); color: #5b6676; background: none; }
+.board { padding: 22px 16px 14px; display: grid; gap: 8px; align-content: start; }
+.board-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.board h3 { margin: 0; font-family: var(--f-pixel); font-size: 12px; letter-spacing: .1em; color: var(--muted); font-weight: 400; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.seg button { background: none; border: 0; padding: 4px 8px; font-family: var(--f-pixel); font-size: 10px; letter-spacing: .06em; color: var(--muted); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--safety); color: var(--ink); }
+.lb { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.lb li { display: grid; grid-template-columns: 22px 22px 1fr auto auto; gap: 8px; align-items: center; padding: 5px 8px; border-radius: 4px; font-variant-numeric: tabular-nums; }
+.lb li.me { background: var(--panel-2); }
+.lb .pos { font-family: var(--f-pixel); font-size: 11px; color: var(--muted); }
+.av { width: 22px; height: 22px; border-radius: 4px; background: var(--c); color: var(--ink); font-family: var(--f-pixel); font-size: 8px; display: grid; place-items: center; }
+.lb .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb .pts { font-family: var(--f-display); font-weight: 600; color: var(--safety); }
+.lb-empty { color: var(--muted); font-size: 14px; display: block !important; }
+.hof { font-size: 13px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 8px; }
+.hof b { color: var(--main); font-weight: 600; }
+
+/* ---------- Forms / panels ---------- */
+.btn { font-family: var(--f-pixel); font-size: 11px; letter-spacing: .06em; cursor: pointer; border-radius: 4px; padding: 8px 10px; border: 1px solid var(--safety); background: transparent; color: var(--safety); white-space: nowrap; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+.btn:hover { background: var(--safety); color: var(--ink); }
+.btn.solid { background: var(--safety); color: var(--ink); } .btn.solid:hover { filter: brightness(1.08); }
+.btn.ghost { border-color: var(--line); color: var(--muted); } .btn.ghost:hover { background: var(--panel-2); color: var(--fg); }
+.btn.danger { border-color: var(--urgent); color: var(--urgent); } .btn.danger:hover { background: var(--urgent); color: #fff; }
+.btn.intel { border-color: var(--intel); color: var(--intel); } .btn.intel:hover { background: var(--intel); color: var(--ink); }
+.btn.small { padding: 5px 7px; font-size: 10px; }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; display: grid; gap: 12px; }
+.panel h3 { margin: 0; font-family: var(--f-pixel); font-size: 12px; letter-spacing: .1em; color: var(--done); font-weight: 400; }
+.panel h4 { margin: 0; font-family: var(--f-display); font-size: 17px; }
+.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.field { display: grid; gap: 4px; min-width: 0; }
+.field label, .flabel { font-family: var(--f-pixel); font-size: 10px; letter-spacing: .08em; color: var(--muted); }
+input[type=text], input[type=date], input:not([type]), select, textarea { background: var(--well); border: 1px solid var(--line); border-radius: 4px; color: var(--fg); padding: 9px 10px; min-width: 0; width: 100%; }
+textarea { min-height: 70px; resize: vertical; }
+.check { display: inline-flex; gap: 8px; align-items: center; font-size: 14px; color: var(--muted); cursor: pointer; }
+.check input { width: 16px; height: 16px; accent-color: var(--safety); }
+.swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+.sw { width: 30px; height: 30px; border-radius: 4px; border: 2px solid transparent; background: var(--c); cursor: pointer; }
+.sw[aria-pressed="true"] { border-color: var(--fg); }
+.form-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.hint { color: var(--muted); font-size: 13px; }
+.err { color: var(--urgent); font-size: 13px; }
+.admin-tag { font-family: var(--f-pixel); font-size: 10px; letter-spacing: .08em; color: var(--ink); background: var(--done); border-radius: 3px; padding: 3px 6px; }
+.join { grid-column: 1 / -1; display: grid; gap: 10px; }
+.tlist { display: grid; gap: 6px; }
+.trow { display: flex; justify-content: space-between; align-items: center; gap: 8px; background: var(--well); border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; flex-wrap: wrap; }
+.trow span { min-width: 0; overflow-wrap: anywhere; }
+
+/* ---------- Tabs + quests ---------- */
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.tab { font-family: var(--f-pixel); font-size: 12px; letter-spacing: .06em; background: var(--panel); color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 8px 12px; cursor: pointer; display: inline-flex; gap: 8px; align-items: center; }
+.tab .n { color: var(--fg); }
+.tab:hover { color: var(--fg); border-color: var(--line-hi); }
+.tab[aria-selected="true"] { background: var(--safety); color: var(--ink); border-color: var(--safety); }
+.tab[aria-selected="true"] .n { color: var(--ink); }
+.tab.intel-tab .n { color: var(--intel); }
+.list { display: grid; gap: 10px; }
+.section-label { font-family: var(--f-pixel); font-size: 12px; letter-spacing: .1em; color: var(--muted); display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.section-label::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.quest { --tier: var(--main); background: var(--panel); border: 1px solid var(--line); border-left: 6px solid var(--tier); border-radius: 4px; display: grid; grid-template-columns: 1fr auto; gap: 6px 16px; padding: 14px 16px; }
+.quest:hover { border-color: var(--line-hi); border-left-color: var(--tier); }
+.quest[data-tier="urgent"] { --tier: var(--urgent); } .quest[data-tier="side"] { --tier: var(--side); } .quest[data-tier="lore"] { --tier: var(--lore); }
+.quest.is-done { --tier: var(--done); opacity: .7; }
+.quest.is-done .q-title { text-decoration: line-through; text-decoration-color: var(--done); }
+.q-main { min-width: 0; display: grid; gap: 4px; }
+.q-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chip { font-family: var(--f-pixel); font-size: 10px; letter-spacing: .06em; line-height: 1; padding: 5px 7px; border-radius: 3px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.chip.tier { color: var(--tier); border-color: color-mix(in srgb, var(--tier) 45%, transparent); background: color-mix(in srgb, var(--tier) 10%, transparent); }
+.chip.overdue { color: #fff; background: var(--urgent); border-color: var(--urgent); }
+.chip.today { color: var(--ink); background: var(--main); border-color: var(--main); }
+.chip.soon { color: var(--main); border-color: color-mix(in srgb, var(--main) 50%, transparent); }
+.chip.who { color: var(--fg); border-color: color-mix(in srgb, var(--c) 60%, transparent); background: color-mix(in srgb, var(--c) 14%, transparent); }
+.chip.new { color: var(--ink); background: var(--intel); border-color: var(--intel); }
+.chip.squad { color: var(--side); border-color: color-mix(in srgb, var(--side) 50%, transparent); }
+.chip.ok { color: var(--done); border-color: color-mix(in srgb, var(--done) 50%, transparent); }
+.q-title { margin: 0; font-family: var(--f-display); font-weight: 600; font-size: 18px; line-height: 1.25; text-wrap: balance; }
+.q-giver { color: var(--muted); font-size: 14px; }
+.q-giver b { color: var(--fg); font-weight: 500; }
+.q-side { display: grid; gap: 8px; justify-items: end; align-content: start; }
+.q-btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: end; }
+.reward { font-family: var(--f-display); font-weight: 700; font-size: 16px; color: var(--safety); font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+.reward small { display: block; font-family: var(--f-pixel); font-size: 9px; color: var(--main); letter-spacing: .05em; font-weight: 400; }
+.toggle { grid-column: 1 / -1; justify-self: start; background: none; border: 0; padding: 2px 0; color: var(--muted); font-family: var(--f-pixel); font-size: 10px; letter-spacing: .08em; cursor: pointer; }
+.toggle:hover { color: var(--fg); }
+.intel-bar { grid-column: 1 / -1; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: space-between; background: color-mix(in srgb, var(--intel) 10%, var(--well)); border: 1px solid color-mix(in srgb, var(--intel) 45%, transparent); border-radius: 4px; padding: 8px 10px; }
+.intel-bar p { margin: 0; font-size: 14px; min-width: 0; }
+.intel-bar b { font-family: var(--f-pixel); font-size: 10px; letter-spacing: .08em; color: var(--intel); margin-right: 6px; font-weight: 400; }
+.drawer { grid-column: 1 / -1; background: var(--well); border: 1px dashed var(--line); border-radius: 4px; padding: 12px 14px; display: grid; gap: 14px; }
+.drawer p { margin: 0; max-width: 72ch; }
+.dsec { display: grid; gap: 6px; }
+.dsec > .flabel { color: var(--muted); }
+.q-source { font-family: var(--f-pixel); font-size: 10px; color: var(--muted); letter-spacing: .05em; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.cl { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.cl li { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.cl label { display: flex; gap: 8px; align-items: center; cursor: pointer; min-width: 0; }
+.cl input { width: 16px; height: 16px; accent-color: var(--done); flex: none; }
+.cl .x { color: var(--muted); font-size: 12px; }
+.cl li.done span { text-decoration: line-through; color: var(--muted); }
+.inline { display: flex; gap: 6px; }
+.inline input { flex: 1; }
+.notes { display: grid; gap: 6px; }
+.note { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; }
+.note .meta { font-family: var(--f-pixel); font-size: 9px; color: var(--muted); letter-spacing: .05em; }
+.note p { font-size: 14px; }
+.hist { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 13px; color: var(--muted); }
+.hist time { font-family: var(--f-pixel); font-size: 9px; margin-right: 6px; }
+.proofbox { grid-column: 1 / -1; display: grid; gap: 8px; background: color-mix(in srgb, var(--done) 7%, var(--well)); border: 1px solid color-mix(in srgb, var(--done) 40%, transparent); border-radius: 4px; padding: 12px; }
+.proofbox h4 { margin: 0; font-family: var(--f-pixel); font-size: 11px; letter-spacing: .08em; color: var(--done); font-weight: 400; }
+.proof { font-size: 14px; }
+.proof b { font-family: var(--f-pixel); font-size: 10px; color: var(--done); letter-spacing: .06em; font-weight: 400; margin-right: 6px; }
+.admin-row { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; border-top: 1px dashed var(--line); padding-top: 8px; }
+.admin-row .lbl { font-family: var(--f-pixel); font-size: 10px; color: var(--done); letter-spacing: .08em; }
+.admin-row select { width: auto; max-width: 100%; padding: 6px 8px; font-size: 13px; }
+
+/* ---------- Debrief ---------- */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 12px; }
+.kpi b { display: block; font-family: var(--f-display); font-size: 28px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.kpi span { font-family: var(--f-pixel); font-size: 10px; letter-spacing: .06em; color: var(--muted); }
+.tablewrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-family: var(--f-pixel); font-size: 10px; letter-spacing: .06em; color: var(--muted); font-weight: 400; }
+td.num, th.num { text-align: right; }
+pre.summary { margin: 0; white-space: pre-wrap; background: var(--well); border: 1px solid var(--line); border-radius: 4px; padding: 12px; font-family: var(--f-body); font-size: 14px; max-height: 320px; overflow: auto; }
+
+/* ---------- States ---------- */
+.empty { background: var(--panel); border: 1px dashed var(--line); border-radius: 6px; padding: 28px 20px; text-align: center; display: grid; gap: 8px; justify-items: center; }
+.empty h2 { margin: 0; font-family: var(--f-display); font-size: 20px; }
+.empty p { margin: 0; color: var(--muted); max-width: 52ch; }
+.foot { color: var(--muted); font-size: 13px; text-align: center; margin: 0; }
+.toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translate(-50%, 160%); background: var(--panel-2); border: 2px solid var(--safety); border-radius: 6px; padding: 10px 16px; font-family: var(--f-pixel); font-size: 13px; letter-spacing: .06em; transition: transform .35s cubic-bezier(.2,.8,.2,1); z-index: 40; max-width: calc(100% - 32px); text-align: center; }
+.toast.show { transform: translate(-50%, 0); }
+.toast.level { border-color: var(--done); color: var(--done); }
+.pop { animation: pop .5s ease; }
+@keyframes pop { 40% { transform: scale(1.06); } }
+
+/* ---------- TV mode ---------- */
+body.tv { font-size: 18px; padding-block: 24px; }
+body.tv .wrap { max-width: none; }
+.tvgrid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 20px; min-height: calc(100vh - 160px); }
+.tvcol { display: grid; gap: 12px; align-content: start; }
+.tvh { font-family: var(--f-pixel); font-size: 16px; letter-spacing: .12em; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+.tvq { background: var(--panel); border-left: 8px solid var(--tier, var(--main)); border-radius: 4px; padding: 14px 18px; display: grid; gap: 4px; }
+.tvq h3 { margin: 0; font-family: var(--f-display); font-size: 26px; line-height: 1.15; }
+.tvq .q-meta .chip { font-size: 12px; }
+.tvlb { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.tvlb li { display: grid; grid-template-columns: 40px 1fr auto; gap: 12px; align-items: center; background: var(--panel); border-radius: 4px; padding: 12px 16px; font-size: 22px; }
+.tvlb .pos { font-family: var(--f-display); font-weight: 700; color: var(--muted); font-size: 26px; }
+.tvlb li:first-child .pos { color: var(--main); }
+.tvlb .pts { font-family: var(--f-display); font-weight: 700; color: var(--safety); }
+.tvclock { font-family: var(--f-display); font-size: 22px; color: var(--fg); }
+
+@media (prefers-reduced-motion: reduce) { .xp-fill, .toast { transition: none; } .pop { animation: none; } }
+@media (max-width: 760px) {
+  .top, .tvgrid { grid-template-columns: 1fr; }
+  .quest { grid-template-columns: 1fr; }
+  .q-side { justify-items: start; grid-auto-flow: column; justify-content: space-between; align-items: center; }
+  .reward { text-align: left; }
+}
+
+/* ===== Modern skin: same layout, crisper surfaces, type and controls ===== */
+:root {
+  --bg: #0d1117; --panel: #151b23; --panel-2: #1c242e; --well: #0a0e13; --line: #263040; --line-hi: #3a475a;
+  --fg: #eef2f6; --muted: #8b98a9;
+  --radius: 12px; --radius-sm: 8px;
+  --shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 8px 24px -12px rgba(0,0,0,.55);
+  --f-pixel: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+body {
+  background: radial-gradient(1200px 600px at 85% -10%, rgba(255,138,31,.07), transparent 60%),
+              radial-gradient(900px 500px at -10% 10%, rgba(125,183,255,.05), transparent 60%), var(--bg);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+.sub, .eyebrow, .xp-label, .stat span, .board h3, .panel h3, .tab, .view, .chip, .btn, .toggle,
+.field label, .flabel, .kpi span, th, .q-source, .note .meta, .hist time, .badge, .admin-tag, .streak, .lb .pos, .reward small, .seg button, .tvh, .demobar b {
+  font-weight: 600; letter-spacing: .04em;
+}
+.titlebar h1 { letter-spacing: .01em; font-weight: 700; }
+
+/* Surfaces */
+.hud, .board, .panel, .quest, .stat, .kpi, .empty, .tvq, .tvlb li, .demobar {
+  border-radius: var(--radius); box-shadow: var(--shadow); border-color: var(--line);
+}
+.hud::before, .board::before { height: 3px; background: linear-gradient(90deg, var(--safety), #ffc069 55%, transparent); }
+.stat { padding: 8px 14px; background: color-mix(in srgb, var(--panel) 85%, transparent); backdrop-filter: blur(6px); }
+.avatar { border-radius: 14px; border-width: 1.5px; background: linear-gradient(160deg, var(--panel-2), var(--well)); }
+.xp-bar { height: 10px; border-radius: 999px; border: 0; background: var(--well); box-shadow: inset 0 0 0 1px var(--line); }
+.xp-fill { border-radius: 999px; background: linear-gradient(90deg, var(--pc, var(--safety)), color-mix(in srgb, var(--pc, var(--safety)) 60%, #fff)); }
+.lb li { border-radius: var(--radius-sm); padding: 7px 10px; transition: background .15s ease; }
+.lb li:hover { background: var(--panel-2); }
+.av { border-radius: 7px; }
+
+/* Controls */
+.btn { border-radius: var(--radius-sm); padding: 8px 12px; transition: background .15s ease, color .15s ease, border-color .15s ease, transform .1s ease; }
+.btn:active { transform: translateY(1px); }
+.btn.ghost { background: var(--panel-2); border-color: var(--line); color: var(--fg); }
+.btn.ghost:hover { border-color: var(--line-hi); background: color-mix(in srgb, var(--panel-2) 70%, var(--line-hi)); }
+.btn.solid { box-shadow: 0 6px 16px -8px rgba(255,138,31,.7); }
+.btn.small { padding: 5px 9px; }
+input[type=text], input[type=date], input[type=number], input:not([type]), select, textarea {
+  border-radius: var(--radius-sm); border-color: var(--line); transition: border-color .15s ease, box-shadow .15s ease;
+}
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--safety); box-shadow: 0 0 0 3px rgba(255,138,31,.18); }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--safety); outline-offset: 2px; }
+.seg { border-radius: 999px; padding: 2px; background: var(--well); border-color: var(--line); }
+.seg button { border-radius: 999px; padding: 4px 10px; }
+.views { border-bottom-color: var(--line); gap: 4px; }
+.view { border-radius: 999px; padding: 7px 14px; }
+.view[aria-current="page"] { background: var(--panel-2); border-color: var(--line); box-shadow: none; color: var(--fg); }
+.view[aria-current="page"]::after { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--safety); margin-left: 8px; vertical-align: 1px; }
+.tabs { gap: 6px; }
+.tab { border-radius: 999px; padding: 7px 13px; background: var(--panel); transition: background .15s ease, border-color .15s ease; }
+.tab .n { font-variant-numeric: tabular-nums; opacity: .85; }
+.tab[aria-selected="true"] { box-shadow: 0 6px 16px -10px rgba(255,138,31,.8); }
+
+/* Chips and badges */
+.chip { border-radius: 999px; padding: 5px 9px; font-size: 10px; }
+.badge { border-radius: 999px; padding: 4px 9px; font-size: 9.5px; }
+.admin-tag { border-radius: 999px; padding: 3px 8px; }
+
+/* Quest cards */
+.quest { border-left-width: 1px; position: relative; overflow: hidden; padding: 16px 18px 14px 22px; transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease; }
+.quest::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--tier); }
+.quest:hover { transform: translateY(-1px); box-shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 14px 30px -16px rgba(0,0,0,.7); border-left-color: var(--line-hi); }
+.quest.is-done { opacity: .62; }
+.q-title { font-size: 18.5px; letter-spacing: .005em; }
+.drawer, .proofbox, .intel-bar, .note, .trow, pre.summary { border-radius: var(--radius-sm); }
+.drawer { border-style: solid; border-color: var(--line); background: color-mix(in srgb, var(--well) 80%, transparent); }
+.section-label { margin-top: 10px; }
+.section-label::after { background: linear-gradient(90deg, var(--line), transparent); }
+
+/* Toast */
+.toast { border-radius: 999px; border-width: 1px; padding: 10px 18px; background: color-mix(in srgb, var(--panel-2) 88%, transparent); backdrop-filter: blur(10px); box-shadow: 0 12px 30px -12px rgba(0,0,0,.7); }
+
+/* TV */
+.tvq { border-left-width: 0; position: relative; overflow: hidden; padding-left: 24px; }
+.tvq::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 6px; background: var(--tier, var(--main)); }
+@media (prefers-reduced-motion: reduce) { .quest, .btn, .tab { transition: none; } .quest:hover { transform: none; } }
+
+/* ===== UPS tracker ===== */
+.vbadge { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; margin-left: 6px; border-radius: 999px; background: var(--urgent); color: #fff; font-size: 10px; }
+.ship { --st: var(--side); background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius, 12px); box-shadow: var(--shadow, none); position: relative; overflow: hidden;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; padding: 14px 18px 12px 22px; }
+.ship::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--st); }
+.ship[data-st="exception"], .ship[data-st="claim"] { --st: var(--urgent); }
+.ship[data-st="delivered"] { --st: var(--done); }
+.ship[data-st="label"] { --st: var(--lore); }
+.ship[data-st="resolved"] { --st: var(--main); }
+.ship.acked { opacity: .78; }
+.ship-main { min-width: 0; display: grid; gap: 4px; }
+.ship-top { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.trk { font-family: var(--f-pixel); font-size: 13px; letter-spacing: .04em; color: var(--fg); background: var(--well); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+.trk:hover { border-color: var(--line-hi); }
+.chip.st { color: var(--st); border-color: color-mix(in srgb, var(--st) 50%, transparent); background: color-mix(in srgb, var(--st) 12%, transparent); }
+.ship-to { font-family: var(--f-display); font-size: 17px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
+.ship-last { font-size: 14px; color: var(--fg); }
+.ship-last time, .tl time { font-family: var(--f-pixel); font-size: 10px; color: var(--muted); margin-right: 8px; letter-spacing: .04em; }
+.ship-side { display: grid; gap: 8px; justify-items: end; align-content: start; }
+.ship .tl { grid-column: 1 / -1; list-style: none; margin: 4px 0 0; padding: 10px 0 0; border-top: 1px dashed var(--line); display: grid; gap: 6px; font-size: 14px; }
+.ship .tl li { display: grid; grid-template-columns: 10px auto 1fr; gap: 8px; align-items: baseline; }
+.ship .tl li::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--line-hi); transform: translateY(1px); }
+.ship .tl li.exception::before { background: var(--urgent); } .ship .tl li.delivered::before { background: var(--done); }
+@media (max-width: 760px) { .ship { grid-template-columns: 1fr; } .ship-side { justify-items: start; grid-auto-flow: column; justify-content: start; } }
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <div class="userbar">
+    <span class="sub">WYANOKE CAMPUS LOGISTICS</span>
+    <div class="right"><span id="who"></span><button class="btn ghost small" id="signout" hidden>SIGN OUT</button></div>
+  </div>
+
+  <div class="titlebar">
+    <h1>Warehouse Commander <span>· Ranked Play</span></h1>
+    <div class="team" aria-label="Team totals">
+      <div class="stat hot"><b id="s-urgent">0</b><span>URGENT</span></div>
+      <div class="stat"><b id="s-open">0</b><span>OPEN</span></div>
+      <div class="stat good"><b id="s-done">0</b><span>CLEARED</span></div>
+      <div class="stat intel"><b id="s-intel">0</b><span>INTEL</span></div>
+      <div class="stat hot"><b id="s-ups">0</b><span>UPS ALERTS</span></div>
+    </div>
+  </div>
+
+  <nav class="views" aria-label="Views">
+    <button class="view" data-view="board" aria-current="page">BOARD</button>
+    <button class="view" data-view="debrief" id="v-debrief" hidden>DEBRIEF</button>
+    <button class="view" data-view="ops" id="v-ops" hidden>RECURRING MISSIONS</button>
+    <button class="view" data-view="ups">UPS TRACKER <span class="vbadge" id="ups-badge" hidden></span></button>
+    <button class="view" data-view="tv">TV MODE</button>
+  </nav>
+
+  <!-- ===== BOARD ===== -->
+  <section id="view-board" class="wrap" style="gap:16px">
+    <section class="top">
+      <div class="hud" id="hud" aria-label="Your player">
+        <div class="avatar" id="avatarBox"><div><small>LVL</small><b id="lvl">–</b></div></div>
+        <div class="player">
+          <div class="eyebrow" id="eyebrow">NOW PLAYING</div>
+          <h2 id="pname">Loading…</h2>
+          <div class="role" id="prole">Connecting to the board.</div>
+          <div class="xp" id="xpwrap" hidden>
+            <div class="xp-bar" role="progressbar" aria-label="Experience toward next level" aria-valuemin="0" aria-valuemax="100" id="xpbar"><div class="xp-fill" id="xpfill"></div></div>
+            <div class="xp-label"><span id="xptext">0 / 150 XP</span><span id="rank">RANK: —</span></div>
+          </div>
+        </div>
+        <div class="hud-row" id="hudRow" hidden>
+          <span class="streak" id="streak"></span>
+          <button class="btn ghost small" id="editMe" type="button">EDIT ROLE &amp; COLOR</button>
+        </div>
+        <div class="hud-row" id="badgeRow" hidden><div class="badges" id="badges"></div></div>
+        <form class="join" id="joinForm" hidden autocomplete="off">
+          <div class="fields">
+            <div class="field"><label for="j-role">YOUR ROLE</label><input id="j-role" maxlength="50" placeholder="Warehouse associate"></div>
+            <div class="field"><span class="flabel">PLAYER COLOR</span><div class="swatches" id="swatches"></div></div>
+          </div>
+          <div class="form-row"><span class="hint" id="j-msg">Your Microsoft name shows on the board. New players start at level 1.</span><button class="btn solid" type="submit">JOIN THE CREW ▸</button></div>
+        </form>
+      </div>
+      <div class="board" aria-label="Crew leaderboard">
+        <div class="board-head">
+          <h3 id="lbTitle">LEADERBOARD</h3>
+          <div class="seg" role="group" aria-label="Leaderboard period">
+            <button id="lb-season" aria-pressed="true">THIS MONTH</button><button id="lb-all" aria-pressed="false">ALL-TIME</button>
+          </div>
+        </div>
+        <ol class="lb" id="lb"><li class="lb-empty">Loading crew…</li></ol>
+        <div class="hof" id="hof"></div>
+      </div>
+    </section>
+
+    <section class="panel" id="adminPanel" hidden aria-label="Admin tools">
+      <div class="form-row"><h3>ADMIN · POST A NEW QUEST</h3><span class="admin-tag">ADMIN</span></div>
+      <form id="qForm" autocomplete="off" style="display:grid;gap:10px">
+        <div class="fields">
+          <div class="field"><label for="q-board">BOARD</label>
+            <select id="q-board"><option value="shared">Warehouse board (whole crew)</option><option value="personal">My personal list (only me)</option></select></div>
+          <div class="field"><label for="q-title">QUEST</label><input id="q-title" maxlength="120" required placeholder="Ship H802 boxes to Denver (2-day)"></div>
+          <div class="field"><label for="q-giver">REQUESTED BY</label><input id="q-giver" maxlength="80" placeholder="Name / team"></div>
+          <div class="field"><label for="q-tier">TIER</label>
+            <select id="q-tier"><option value="urgent">Urgent · 100 XP</option><option value="main" selected>Main quest · 60 XP</option><option value="side">Side quest · 30 XP</option><option value="lore">Lore · 10 XP</option></select></div>
+          <div class="field"><label for="q-due">DUE DATE</label><input id="q-due" type="date"></div>
+          <div class="field" id="q-repeat-f"><label for="q-repeat">REPEATS</label>
+            <select id="q-repeat"><option value="">Does not repeat</option><option value="daily">Every workday</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></div>
+          <div class="field" id="q-weekday-f" hidden><label for="q-weekday">ON</label><select id="q-weekday"><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5" selected>Friday</option></select></div>
+          <div class="field" id="q-day-f" hidden><label for="q-day">DAY OF MONTH</label><input id="q-day" type="number" min="1" max="28" value="1"></div>
+        </div>
+        <span class="hint" id="q-repeat-hint" hidden>This first one posts now. After that it posts itself automatically, due the same day, and shows under Recurring missions where you can pause or delete it.</span>
+        <div class="field"><label for="q-details">BRIEFING</label><textarea id="q-details" maxlength="2000" placeholder="Boxes, carrier, tracking, billing code, who to tell when it's done."></textarea></div>
+        <div class="field"><label for="q-checklist">CHECKLIST (ONE STEP PER LINE, OPTIONAL)</label><textarea id="q-checklist" maxlength="1500" placeholder="Pull boxes from cube&#10;Print labels&#10;Schedule pickup"></textarea></div>
+        <div class="form-row">
+          <div style="display:flex;gap:16px;flex-wrap:wrap">
+            <label class="check"><input type="checkbox" id="q-proof"> Needs tracking # or proof to clear</label>
+            <label class="check" id="q-squad-l"><input type="checkbox" id="q-squad"> Squad quest (several people, XP split)</label>
+          </div>
+          <button class="btn solid" type="submit">POST QUEST ▸</button>
+        </div>
+        <span class="hint" id="q-msg">Only admins can post, assign and delete quests, or remove players. Personal-list quests stay in your own OneDrive and the crew never sees them.</span>
+      </form>
+    </section>
+
+    <nav class="tabs" role="tablist" aria-label="Filter quests" id="tabs"></nav>
+    <main class="list" id="list" aria-live="polite">
+      <div class="empty"><h2>Loading the quest board…</h2><p>Open shipping, receiving and facilities tasks appear here as quests. Claim one, clear it, earn XP.</p></div>
+    </main>
+  </section>
+
+  <!-- ===== DEBRIEF ===== -->
+  <section id="view-debrief" class="wrap" style="gap:16px" hidden>
+    <div class="form-row">
+      <h2 style="margin:0;font-family:var(--f-display);font-size:26px;text-transform:uppercase">Weekly debrief</h2>
+      <div class="seg" role="group" aria-label="Debrief period">
+        <button id="db-week" aria-pressed="true">LAST 7 DAYS</button><button id="db-month" aria-pressed="false">THIS MONTH</button>
+      </div>
+    </div>
+    <div class="kpis" id="kpis"></div>
+    <div class="panel"><h3>CREW PERFORMANCE</h3><div class="tablewrap" id="perf"></div></div>
+    <div class="panel"><h3>STILL OPEN · OVERDUE FIRST</h3><div class="tablewrap" id="openTable"></div></div>
+    <div class="panel">
+      <div class="form-row"><h3>SUMMARY TO PASTE INTO AN EMAIL</h3><button class="btn solid" id="copySum">COPY SUMMARY</button></div>
+      <pre class="summary" id="summary"></pre>
+    </div>
+  </section>
+
+  <!-- ===== RECURRING ===== -->
+  <section id="view-ops" class="wrap" style="gap:16px" hidden>
+    <div class="panel">
+      <h3>NEW RECURRING MISSION</h3>
+      <form id="rForm" autocomplete="off" style="display:grid;gap:10px">
+        <div class="fields">
+          <div class="field"><label for="r-title">MISSION</label><input id="r-title" maxlength="120" required placeholder="Daily dock sweep and outbound check"></div>
+          <div class="field"><label for="r-tier">TIER</label><select id="r-tier"><option value="main">Main quest · 60 XP</option><option value="side" selected>Side quest · 30 XP</option><option value="lore">Lore · 10 XP</option><option value="urgent">Urgent · 100 XP</option></select></div>
+          <div class="field"><label for="r-cadence">REPEATS</label><select id="r-cadence"><option value="daily">Every workday</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></div>
+          <div class="field" id="r-weekday-f"><label for="r-weekday">ON</label><select id="r-weekday"><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5" selected>Friday</option></select></div>
+          <div class="field" id="r-day-f" hidden><label for="r-day">DAY OF MONTH</label><input id="r-day" type="number" min="1" max="28" value="1"></div>
+        </div>
+        <div class="field"><label for="r-details">BRIEFING</label><textarea id="r-details" maxlength="1500"></textarea></div>
+        <div class="field"><label for="r-checklist">CHECKLIST (ONE STEP PER LINE, OPTIONAL)</label><textarea id="r-checklist" maxlength="1500"></textarea></div>
+        <div class="form-row"><span class="hint" id="r-msg">The quest posts itself on its day, due that same day.</span><button class="btn solid" type="submit">ADD RECURRING MISSION ▸</button></div>
+      </form>
+    </div>
+    <div class="panel"><h3>SCHEDULE</h3><div class="tlist" id="rList"></div></div>
+  </section>
+
+  <!-- ===== TV ===== -->
+  <!-- ===== UPS ===== -->
+  <section id="view-ups" class="wrap" style="gap:16px" hidden>
+    <div class="form-row">
+      <div>
+        <h2 style="margin:0;font-family:var(--f-display);font-size:26px;text-transform:uppercase">UPS tracker</h2>
+        <span class="hint" id="ups-sub">Every UPS notification from the Warehouse mailbox, one row per tracking number.</span>
+      </div>
+      <input id="ups-search" type="text" placeholder="Search tracking #, job #, destination…" style="max-width:320px">
+    </div>
+    <div class="kpis" id="ups-kpis"></div>
+    <nav class="tabs" role="tablist" aria-label="Filter shipments" id="ups-tabs"></nav>
+    <div class="list" id="ups-list"></div>
+  </section>
+
+  <section id="view-tv" hidden>
+    <div class="tvgrid">
+      <div class="tvcol">
+        <div class="tvh"><span>PRIORITY MISSIONS</span><span class="tvclock" id="tvclock"></span></div>
+        <div id="tvq" class="tvcol"></div>
+      </div>
+      <div class="tvcol">
+        <div class="tvh"><span id="tvlbTitle">THIS MONTH</span><button class="btn ghost small" id="tvExit">EXIT TV</button></div>
+        <ol class="tvlb" id="tvlb"></ol>
+        <div class="hof" id="tvhof"></div>
+      </div>
+    </div>
+  </section>
+
+  <p class="foot" id="foot">XP: Urgent 100 · Main 60 · Side 30 · Lore 10 · +25% for clearing on or before the due date · Squad XP is split · Level up every 150 XP.</p>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

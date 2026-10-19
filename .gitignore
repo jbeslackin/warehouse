@@ -1,0 +1,4 @@
+# Live data lives in SharePoint and OneDrive, never in this repository
+*.json
+!staticwebapp.config.json
+.DS_Store
