@@ -65,6 +65,7 @@ Optional: add the site URL as a **Website** tab in the warehouse Teams channel.
 | Area | Features |
 |---|---|
 | Work tracking | Proof of completion (a tracking number or note; required on quests flagged "needs proof"), notes on each quest, activity history, a link back to the source email |
+| Team play | **Weekly crew goal**: one shared bar (quests cleared this week, with no overdue urgent quests) and a reward the admin sets. **Daily bounty**: each workday the oldest unclaimed quest gets 2× XP if it's cleared that day. **Assists**: whoever owns a quest can credit a teammate who helped (+15 XP to them, +5 for giving it), with an optional shout-out shown on the board and TV. **Boss fights**: big jobs where the whole crew checks off steps (+15 XP per step) and splits the victory XP |
 | Draft replies | A **Draft reply** button on every quest opens an editable reply (to, subject, message) built from the quest's current status, proof and UPS tracking, or Claude's draft from the email thread when there is one. Copy it into the original thread or open it as a new Outlook message. Nothing is sent from the app, and it needs no extra permissions |
 | Game layer | XP by tier, +25% for clearing on or before the due date, workday streaks, 8 badges, monthly seasons with a hall of fame, an all-time leaderboard |
 | Warehouse ops | Recurring missions (every workday, weekly or monthly; they post themselves), checklists, squad quests (several people, XP split), TV mode |
@@ -93,16 +94,20 @@ The admin tools are hidden from everyone else on the page. The real permission b
     "notes": [{ "id": "n1", "by": "<id>", "at": "…", "text": "…" }],
     "history": [{ "at": "…", "by": "<id or claude>", "action": "…", "detail": "…" }],
     "replyTo": "<sender email or null>", "replyDraft": { "to": "…", "subject": "RE: …", "body": "…", "at": "…" },
+    "boss": false, "bounty": "<YYYY-MM-DD the quest was the daily bounty, or absent>",
+    "assists": [{ "id": "a1", "by": "<id>", "to": "<id>", "at": "…", "note": "…" }],
     "fromInbox": true, "reviewed": false,
     "intel": { "text": "UPS shows delivered Fri 10/16 9:45 AM", "link": "<Outlook link>", "at": "…" },
     "createdAt": "…", "createdBy": "<id | claude | recurring>", "recurringId": null
   }],
+  "goal": { "target": 25, "reward": "Pizza Friday", "active": true },
+  "bounty": { "date": "2026-10-20", "questId": "q123" },
   "recurring": [{ "id": "r1", "title": "…", "tier": "side", "cadence": "daily | weekly | monthly", "weekday": 5, "day": 1,
                   "details": "…", "checklist": ["…"], "active": true, "lastSpawned": "2026-10-19" }]
 }
 ```
 
-XP, levels, streaks, badges and seasons are all computed from completed quests, so they can't drift out of sync. Finished quests older than 45 days are trimmed to the fields XP needs, which keeps the file small (well under 1 MB).
+XP, levels, streaks, badges, assists, bounties and seasons are all computed from the quests, so they can't drift out of sync. Finished quests older than 45 days are trimmed to the fields XP needs, which keeps the file small (well under 1 MB).
 
 ### How Claude updates the files
 

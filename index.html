@@ -212,6 +212,53 @@ pre.summary { margin: 0; white-space: pre-wrap; background: var(--well); border:
 .pop { animation: pop .5s ease; }
 @keyframes pop { 40% { transform: scale(1.06); } }
 
+
+/* ---------- Team play: crew goal, bounty, assists, boss fights ---------- */
+.goal { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-sm, 6px); padding: 12px 14px; display: grid; gap: 8px; }
+.goal.met { border-color: var(--done); box-shadow: 0 0 0 1px color-mix(in srgb, var(--done) 40%, transparent) inset; }
+.goal.off .goal-top { gap: 10px; }
+.goal-top { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.goal-top > b { font-family: var(--f-pixel); font-size: 12px; letter-spacing: .1em; color: var(--safety); font-weight: 400; }
+.goal.met .goal-top > b { color: var(--done); }
+.goal-num { font-family: var(--f-display); font-weight: 700; font-size: 22px; }
+.goal-num small { font-size: 11px; color: var(--muted); letter-spacing: .08em; }
+.goal-reward { color: var(--muted); font-size: 14px; margin-left: auto; }
+.goal-reward b { color: var(--fg); }
+.goal-bar, .boss-bar { height: 12px; border-radius: 999px; background: var(--well); border: 1px solid var(--line); overflow: hidden; }
+.goal-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--safety), var(--done)); transition: width .6s ease; }
+.goal-sub { display: flex; gap: 16px; flex-wrap: wrap; font-family: var(--f-pixel); font-size: 11px; letter-spacing: .06em; color: var(--muted); }
+.goal-sub .ok { color: var(--done); } .goal-sub .bad { color: var(--urgent); }
+.goal-form { display: grid; grid-template-columns: 180px 1fr auto; gap: 10px; align-items: end; }
+.bountybar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 14px; border-radius: var(--radius-sm, 6px); border: 1px dashed color-mix(in srgb, #ffcf4a 70%, transparent); background: color-mix(in srgb, #ffcf4a 8%, var(--panel)); }
+.bountybar > b { font-family: var(--f-pixel); font-size: 12px; letter-spacing: .08em; color: #ffcf4a; font-weight: 400; }
+.bountybar > span:not(.hint) { font-weight: 600; }
+.bountybar .btn { margin-left: auto; }
+.chip.bountychip { color: #ffcf4a; border-color: color-mix(in srgb, #ffcf4a 60%, transparent); }
+.chip.bosschip { color: var(--urgent); border-color: color-mix(in srgb, var(--urgent) 60%, transparent); }
+.quest.is-bounty { box-shadow: 0 0 0 1px color-mix(in srgb, #ffcf4a 55%, transparent); }
+.reward.bounty { color: #ffcf4a; }
+.boss { display: grid; gap: 6px; margin-top: 8px; }
+.boss-top { display: flex; align-items: center; gap: 10px; font-family: var(--f-pixel); font-size: 11px; letter-spacing: .08em; }
+.boss-top b { color: var(--urgent); font-weight: 400; }
+.boss-crew { display: flex; gap: 4px; margin-left: auto; }
+.boss-crew .av { width: 22px; height: 22px; font-size: 10px; }
+.boss-bar i { display: block; height: 100%; background: linear-gradient(90deg, #c2263b, var(--urgent)); transition: width .6s ease; }
+.boss.big .boss-bar { height: 18px; }
+.quest.is-boss { border-color: color-mix(in srgb, var(--urgent) 45%, var(--line)); }
+.assistbox { grid-column: 1 / -1; display: grid; gap: 8px; background: color-mix(in srgb, var(--done) 6%, var(--well)); border: 1px solid color-mix(in srgb, var(--done) 35%, transparent); border-radius: var(--radius-sm, 4px); padding: 12px; }
+.assistbox h4 { margin: 0; font-family: var(--f-pixel); font-size: 11px; letter-spacing: .08em; color: var(--done); font-weight: 400; }
+.assistbox .q-btns { justify-content: flex-end; }
+.shouts-h { margin: 14px 0 6px; font-family: var(--f-pixel); font-size: 11px; letter-spacing: .1em; color: var(--muted); font-weight: 400; }
+.shouts { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
+.shouts li { background: var(--well); border-radius: 4px; padding: 7px 10px; line-height: 1.35; }
+.shouts .muted { color: var(--muted); }
+.shouts.tv { font-size: 18px; }
+.shouts.tv li { background: var(--panel); padding: 10px 14px; }
+.bountybar.tvb { font-size: 20px; }
+#tvbounty:empty, #tvboss:empty, #tvgoal:empty, #tvshouts:empty { display: none; }
+.tvbossq h3 { font-size: 24px; }
+@media (max-width: 640px) { .goal-form { grid-template-columns: 1fr; } .goal-reward { margin-left: 0; } .bountybar .btn { margin-left: 0; } }
+
 /* ---------- TV mode ---------- */
 body.tv { font-size: 18px; padding-block: 24px; }
 body.tv .wrap { max-width: none; }
@@ -404,6 +451,8 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--safety); outlin
         </div>
         <ol class="lb" id="lb"><li class="lb-empty">Loading crew…</li></ol>
         <div class="hof" id="hof"></div>
+        <h3 class="shouts-h">SHOUT-OUTS</h3>
+        <ul class="shouts" id="shouts"></ul>
       </div>
     </section>
 
@@ -430,6 +479,7 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--safety); outlin
           <div style="display:flex;gap:16px;flex-wrap:wrap">
             <label class="check"><input type="checkbox" id="q-proof"> Needs tracking # or proof to clear</label>
             <label class="check" id="q-squad-l"><input type="checkbox" id="q-squad"> Squad quest (several people, XP split)</label>
+            <label class="check" id="q-boss-l"><input type="checkbox" id="q-boss"> Boss fight (whole crew chips away at the checklist)</label>
           </div>
           <button class="btn solid" type="submit">POST QUEST ▸</button>
         </div>
@@ -499,12 +549,17 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--safety); outlin
     <div class="tvgrid">
       <div class="tvcol">
         <div class="tvh"><span>PRIORITY MISSIONS</span><span class="tvclock" id="tvclock"></span></div>
+        <div id="tvbounty"></div>
+        <div id="tvboss" class="tvcol"></div>
         <div id="tvq" class="tvcol"></div>
       </div>
       <div class="tvcol">
-        <div class="tvh"><span id="tvlbTitle">THIS MONTH</span><button class="btn ghost small" id="tvExit">EXIT TV</button></div>
+        <div class="tvh"><span>THE CREW</span><button class="btn ghost small" id="tvExit">EXIT TV</button></div>
+        <div id="tvgoal"></div>
+        <div class="tvh"><span id="tvlbTitle">THIS MONTH</span></div>
         <ol class="tvlb" id="tvlb"></ol>
         <div class="hof" id="tvhof"></div>
+        <div id="tvshouts" class="tvcol"></div>
       </div>
     </div>
   </section>

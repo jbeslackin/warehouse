@@ -18,6 +18,7 @@
     lore:   { label: "LORE", xp: 10, order: 3, color: "var(--lore)" },
   };
   const ON_TIME_BONUS = 0.25;
+  const BOUNTY_MULT = 2, ASSIST_XP = 15, ASSIST_GIVER_XP = 5, MAX_ASSISTS = 4, BOSS_STEP_XP = 15;
   const SHIP_ST = {
     exception: { label: "EXCEPTION", order: 0 }, claim: { label: "CLAIM OPEN", order: 1 }, resolved: { label: "EXCEPTION RESOLVED", order: 2 },
     transit: { label: "IN TRANSIT", order: 3 }, label: { label: "LABEL CREATED", order: 4 }, delivered: { label: "DELIVERED", order: 5 },
@@ -38,6 +39,9 @@
     { key: "squad",   label: "SQUAD UP",        hint: "Clear a squad quest",               test: s => s.squad >= 1 },
     { key: "customs", label: "CUSTOMS BREAKER", hint: "Clear a customs or broker hold",    test: s => s.customs >= 1 },
     { key: "century", label: "CENTURY CLUB",    hint: "Earn 1,000 XP",                     test: s => s.xp >= 1000 },
+    { key: "assist",  label: "TEAM PLAYER",     hint: "Get credited with 5 assists",       test: s => s.assists >= 5 },
+    { key: "bounty",  label: "BOUNTY HUNTER",   hint: "Clear 3 daily bounties",            test: s => s.bounties >= 3 },
+    { key: "raid",    label: "RAID PARTY",      hint: "Help take down a boss fight",       test: s => s.raids >= 1 },
   ];
 
   let msalApp = null, account = null, siteId = null, itemId = null;
@@ -46,7 +50,7 @@
   let view = "board", filter = "all", lbMode = "season", dbMode = "week";
   let openSet = new Set(), completing = null, pickColor = COLORS[0], editing = false;
   let confirmQ = null, confirmP = null, confirmR = null, lastLevel = null;
-  let replying = null;
+  let replying = null, assisting = null, goalEdit = false;
   const drafts = {};
   let ledger = [], statsCache = {};
   const $ = (id) => document.getElementById(id);
@@ -123,7 +127,8 @@
       q.history = Array.isArray(q.history) ? q.history : [];
       q.checklist = Array.isArray(q.checklist) ? q.checklist : [];
       q.status = q.status === "done" ? "done" : "open";
-      q.squad = !!q.squad; q.requiresProof = !!q.requiresProof;
+      q.squad = !!q.squad; q.requiresProof = !!q.requiresProof; q.boss = !!q.boss;
+      q.assists = Array.isArray(q.assists) ? q.assists : [];
       q.fromInbox = !!q.fromInbox; q.reviewed = q.fromInbox ? !!q.reviewed : true;
       q.intel = q.intel && q.intel.text ? q.intel : null;
       q.scope = kind === "personal" ? "personal" : "warehouse";
@@ -138,7 +143,8 @@
     const cutoff = Date.now() - COMPACT_AFTER_DAYS * 86400000;
     doc.quests.forEach(q => {
       if (q.status === "done" && q.doneAt && Date.parse(q.doneAt) < cutoff && !q.compacted) {
-        q.notes = []; q.history = []; q.checklist = []; q.details = ""; q.intel = null; q.compacted = true;
+        q.notes = []; q.history = []; q.details = ""; q.intel = null; q.compacted = true;
+        q.checklist = q.boss ? q.checklist.filter(c => c.done).map(c => ({ id: c.id, text: "", done: true, by: c.by, at: c.at })) : [];
       }
     });
   }
@@ -148,20 +154,28 @@
   }
 
   /* ---------- XP ledger, streaks, badges ---------- */
+  /* Every XP grant is a ledger entry. kind: clear | boss-step | assist | assist-given */
   function awards(q) {
-    if (q.status !== "done" || !q.credit.length || !q.doneAt) return [];
-    const onTime = !!(q.due && isoToLocalDay(q.doneAt) <= q.due);
-    const total = Math.round(tierOf(q).xp * (onTime ? 1 + ON_TIME_BONUS : 1));
-    const each = Math.round(total / q.credit.length);
-    return q.credit.map(id => ({ id, xp: each, onTime, at: q.doneAt, day: isoToLocalDay(q.doneAt), month: monthKey(q.doneAt), q }));
+    const out = [], mk = (id, xp, kind, at, extra = {}) => ({ id, xp, kind, at, day: isoToLocalDay(at), month: monthKey(at), q, onTime: false, ...extra });
+    if (q.boss) q.checklist.forEach(c => { if (c.done && c.by) out.push(mk(c.by, BOSS_STEP_XP, "boss-step", c.at || q.doneAt || q.createdAt)); });
+    (q.assists || []).forEach(a => { out.push(mk(a.to, ASSIST_XP, "assist", a.at)); if (a.by) out.push(mk(a.by, ASSIST_GIVER_XP, "assist-given", a.at)); });
+    if (q.status === "done" && q.credit.length && q.doneAt) {
+      const onTime = !!(q.due && isoToLocalDay(q.doneAt) <= q.due);
+      const bounty = !!(q.bounty && isoToLocalDay(q.doneAt) === q.bounty);
+      const total = Math.round(tierOf(q).xp * (onTime ? 1 + ON_TIME_BONUS : 1) * (bounty ? BOUNTY_MULT : 1));
+      const each = Math.round(total / q.credit.length);
+      q.credit.forEach(id => out.push(mk(q.doneAt ? id : id, each, "clear", q.doneAt, { onTime, bounty })));
+    }
+    return out;
   }
   function buildLedger() {
     ledger = data.quests.flatMap(awards);
     statsCache = {};
   }
+  const clearsOf = (list) => list.filter(a => a.kind === "clear");
   function xpFor(id, month) { return ledger.filter(a => a.id === id && (!month || a.month === month)).reduce((s, a) => s + a.xp, 0); }
   function streakInfo(id) {
-    const days = new Set(ledger.filter(a => a.id === id).map(a => a.day));
+    const days = new Set(ledger.filter(a => a.id === id && (a.kind === "clear" || a.kind === "boss-step")).map(a => a.day));
     let d = parseDay(todayIso());
     if (!isWorkday(d)) d = prevWorkday(d);
     else if (!days.has(localDate(d))) d = prevWorkday(d); // today isn't over: the streak is still alive
@@ -176,10 +190,11 @@
   }
   function stats(id) {
     if (statsCache[id]) return statsCache[id];
-    const mine = ledger.filter(a => a.id === id);
+    const all = ledger.filter(a => a.id === id), mine = clearsOf(all);
     const st = streakInfo(id);
     const s = {
-      clears: mine.length, xp: mine.reduce((t, a) => t + a.xp, 0), onTime: mine.filter(a => a.onTime).length,
+      clears: mine.length, xp: all.reduce((t, a) => t + a.xp, 0), onTime: mine.filter(a => a.onTime).length,
+      assists: all.filter(a => a.kind === "assist").length, bounties: mine.filter(a => a.bounty).length, raids: mine.filter(a => a.q.boss).length,
       urgent: mine.filter(a => a.q.tier === "urgent").length, proof: mine.filter(a => a.q.proof && (a.q.proof.tracking || a.q.proof.note)).length,
       squad: mine.filter(a => a.q.squad).length, customs: mine.filter(a => /customs|broker/i.test((a.q.title || "") + " " + (a.q.details || ""))).length,
       streak: st.cur, bestStreak: st.best,
@@ -188,8 +203,128 @@
     return (statsCache[id] = s);
   }
   function previewXp(q) {
-    const base = tierOf(q).xp, n = Math.max(1, q.squad ? q.assignees.length || 1 : 1);
+    const mult = isBountyToday(q) ? BOUNTY_MULT : 1;
+    const base = tierOf(q).xp * mult, n = Math.max(1, q.squad ? q.assignees.length || 1 : 1);
     return { base: Math.round(base / n), bonus: Math.round(base * (1 + ON_TIME_BONUS) / n) };
+  }
+
+  /* ---------- Daily bounty ---------- */
+  const isBountyToday = (q) => !!(q && q.bounty === todayIso() && q.status !== "done" && !isPersonal(q));
+  const bountyQuest = () => data.bounty && data.bounty.date === todayIso() ? data.quests.find(q => q.id === data.bounty.questId && q.status !== "done") || null : null;
+  function pickBounty(doc) {
+    const t = todayIso();
+    if (doc.bounty && doc.bounty.date === t) return false;
+    const pool = doc.quests.filter(q => q.status !== "done" && !q.assignees.length && !q.boss && !q.intel && q.tier !== "lore" && q.createdAt && isoToLocalDay(q.createdAt) < t)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const q = pool[0] || null;
+    if (q) { q.bounty = t; q.history.push({ at: nowIso(), by: "claude", action: "posted a bounty on it", detail: "2× XP if cleared today" }); }
+    doc.bounty = { date: t, questId: q ? q.id : null };
+  }
+  async function maybeBounty() {
+    if (!account || !isWorkday(parseDay(todayIso())) || (data.bounty && data.bounty.date === todayIso())) return;
+    await mutate(doc => pickBounty(doc));
+  }
+
+  /* ---------- Weekly crew goal ---------- */
+  function weekStart(d = parseDay(todayIso())) { const x = new Date(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; }
+  function goalStatus(offsetWeeks = 0) {
+    const g = data.goal; if (!g || !g.active || !g.target) return null;
+    const start = weekStart(); start.setDate(start.getDate() - 7 * offsetWeeks);
+    const end = new Date(start); end.setDate(end.getDate() + 7);
+    const s0 = localDate(start), e0 = localDate(end);
+    const cleared = data.quests.filter(q => q.status === "done" && q.doneAt && isoToLocalDay(q.doneAt) >= s0 && isoToLocalDay(q.doneAt) < e0).length;
+    const overdueUrgent = offsetWeeks ? 0 : data.quests.filter(q => q.status !== "done" && q.tier === "urgent" && q.due && daysLeft(q.due) < 0).length;
+    const daysLeftInWeek = Math.max(0, Math.round((end - parseDay(todayIso())) / 86400000) - 2); // workdays-ish: ignore the weekend
+    return { g, cleared, target: g.target, pct: Math.min(100, Math.round(cleared / g.target * 100)), overdueUrgent, met: cleared >= g.target && !overdueUrgent, start, daysLeftInWeek };
+  }
+  function goalBanner(tv = false) {
+    const st = goalStatus();
+    if (!st) {
+      if (!isAdmin || tv || !loaded) return null;
+      return el("div", { class: "goal off" }, el("div", { class: "goal-top" }, el("b", {}, "CREW GOAL"), el("span", { class: "hint" }, "Set a weekly team target and a real reward. Everyone fills one bar together."),
+        el("button", { class: "btn small", onclick: () => { goalEdit = true; render(); } }, "SET A GOAL")), goalEdit ? goalForm() : null);
+    }
+    const last = goalStatus(1);
+    return el("div", { class: "goal" + (st.met ? " met" : ""), role: "group", "aria-label": "Weekly crew goal" },
+      el("div", { class: "goal-top" },
+        el("b", {}, st.met ? "CREW GOAL MET 🎉" : "CREW GOAL · THIS WEEK"),
+        el("span", { class: "goal-num" }, `${st.cleared} / ${st.target}`, el("small", {}, " QUESTS")),
+        st.g.reward ? el("span", { class: "goal-reward" }, "REWARD: ", el("b", {}, st.g.reward)) : null,
+        isAdmin && !tv ? el("button", { class: "btn ghost small", onclick: () => { goalEdit = !goalEdit; render(); } }, goalEdit ? "CLOSE" : "EDIT") : null),
+      el("div", { class: "goal-bar", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": String(st.target), "aria-valuenow": String(st.cleared) }, el("i", { style: `width:${st.pct}%` })),
+      el("div", { class: "goal-sub" },
+        el("span", { class: st.overdueUrgent ? "bad" : "ok" }, st.overdueUrgent ? `✗ ${st.overdueUrgent} OVERDUE URGENT: CLEAR IT TO QUALIFY` : "✓ NO OVERDUE URGENT QUESTS"),
+        el("span", {}, st.met ? "Reward unlocked. Nice work, crew." : `${Math.max(0, st.target - st.cleared)} to go`),
+        last ? el("span", {}, `LAST WEEK: ${last.cleared}/${last.target}${last.cleared >= last.target ? " ✓" : ""}`) : null),
+      goalEdit && isAdmin && !tv ? goalForm() : null);
+  }
+  function goalForm() {
+    const g = data.goal || {};
+    if (drafts["g-target"] === undefined) drafts["g-target"] = String(g.target || 25);
+    if (drafts["g-reward"] === undefined) drafts["g-reward"] = g.reward || "";
+    return el("form", { class: "goal-form", onsubmit: (e) => { e.preventDefault(); saveGoal(true); } },
+      el("div", { class: "field" }, el("label", { for: "g-target" }, "QUESTS TO CLEAR PER WEEK"), inputDraft("g-target", { type: "number", min: 1, max: 500 })),
+      el("div", { class: "field" }, el("label", { for: "g-reward" }, "REWARD IF THE CREW HITS IT"), inputDraft("g-reward", { maxlength: 80, placeholder: "Pizza Friday" })),
+      el("div", { class: "q-btns" }, data.goal && data.goal.active ? el("button", { type: "button", class: "btn ghost small", onclick: () => saveGoal(false) }, "TURN OFF") : null,
+        el("button", { type: "submit", class: "btn solid small" }, "SAVE GOAL")));
+  }
+  async function saveGoal(on) {
+    const target = Math.max(1, Math.min(500, parseInt(drafts["g-target"], 10) || 25)), reward = (drafts["g-reward"] || "").trim().slice(0, 80);
+    if (await mutate(doc => { doc.goal = on ? { target, reward, active: true, updatedAt: nowIso() } : { ...(doc.goal || {}), active: false }; })) {
+      goalEdit = false; clearDrafts("g-target", "g-reward"); render(); toast(on ? "CREW GOAL SAVED" : "CREW GOAL TURNED OFF");
+    }
+  }
+
+  /* ---------- Assists + shout-outs ---------- */
+  function shoutouts(n = 6) {
+    return data.quests.flatMap(q => (q.assists || []).map(a => ({ ...a, q }))).sort((a, b) => (b.at || "").localeCompare(a.at || "")).slice(0, n);
+  }
+  function canAssist(q) {
+    if (isPersonal(q) || !joined() || q.compacted) return false;
+    return isAdmin || q.assignees.includes(myId) || q.credit.includes(myId);
+  }
+  function assistBox(q) {
+    const taken = new Set((q.assists || []).map(a => a.to));
+    const options = data.crew.filter(c => c.id !== myId && !taken.has(c.id));
+    if (drafts["as-who-" + q.id] === undefined) drafts["as-who-" + q.id] = options[0] ? options[0].id : "";
+    const sel = el("select", { id: "as-who-" + q.id, "aria-label": "Who helped", onchange: (e) => { drafts["as-who-" + q.id] = e.target.value; } },
+      options.map(c => el("option", { value: c.id, selected: drafts["as-who-" + q.id] === c.id || null }, c.name)));
+    return el("form", { class: "assistbox", onsubmit: (e) => { e.preventDefault(); giveAssist(q.id); } },
+      el("h4", {}, "WHO HELPED YOU?"),
+      options.length ? el("div", { class: "fields" },
+        el("div", { class: "field" }, el("label", { for: "as-who-" + q.id }, "TEAMMATE"), sel),
+        el("div", { class: "field" }, el("label", { for: "as-note-" + q.id }, "SHOUT-OUT (OPTIONAL)"), inputDraft("as-note-" + q.id, { maxlength: 120, placeholder: "Saved the day with the forklift" })))
+        : el("p", { class: "hint" }, "Everyone on the crew already has an assist on this one."),
+      el("span", { class: "hint" }, `They get +${ASSIST_XP} XP and you get +${ASSIST_GIVER_XP} for giving credit. Shout-outs show on the board and the warehouse TV.`),
+      el("div", { class: "q-btns" }, el("button", { type: "button", class: "btn ghost small", onclick: () => { assisting = null; render(); } }, "CANCEL"),
+        options.length ? el("button", { type: "submit", class: "btn solid small", disabled: busy || null }, "GIVE ASSIST ▸") : null));
+  }
+  async function giveAssist(id) {
+    const to = drafts["as-who-" + id], note = (drafts["as-note-" + id] || "").trim().slice(0, 120);
+    if (!to) return;
+    if (await withQuest(id, q => {
+      q.assists = q.assists || [];
+      if (to === myId || q.assists.some(a => a.to === to) || q.assists.length >= MAX_ASSISTS || !canAssist(q)) { toast("That assist can't be added."); return false; }
+      q.assists.push({ id: uid("a"), by: myId, to, at: nowIso(), note });
+      log(q, "gave an assist", "to " + nameOf(to) + (note ? ": " + note : ""));
+    })) { assisting = null; clearDrafts("as-who-" + id, "as-note-" + id); render(); toast(`ASSIST · +${ASSIST_XP} XP TO ${nameOf(to).toUpperCase()}`); }
+  }
+  function shoutFeed(tv = false) {
+    const list = shoutouts(tv ? 4 : 5);
+    if (!list.length) return tv ? [] : [el("li", { class: "lb-empty" }, "When someone helps on your quest, give them an assist. Shout-outs show up here.")];
+    return list.map(a => el("li", {}, el("b", { style: `color:${colorOf(a.to)}` }, nameOf(a.to)), " helped ", el("b", {}, nameOf(a.by)),
+      tv ? null : [" on ", el("span", { class: "muted" }, a.q.title)], a.note ? [" · “", a.note, "”"] : null));
+  }
+
+  /* ---------- Boss fights ---------- */
+  function bossHp(q) { const total = q.checklist.length, left = q.checklist.filter(c => !c.done).length; return { total, left, pct: total ? Math.round(left / total * 100) : 0 }; }
+  function bossBar(q, big = false) {
+    const h = bossHp(q), fighters = [...new Set(q.checklist.filter(c => c.done && c.by).map(c => c.by))];
+    return el("div", { class: "boss" + (big ? " big" : "") },
+      el("div", { class: "boss-top" }, el("b", {}, h.left ? "BOSS HP" : "BOSS DEFEATED"), el("span", {}, `${h.left} / ${h.total}`),
+        fighters.length ? el("span", { class: "boss-crew" }, fighters.map(id => el("span", { class: "av", title: nameOf(id), style: `--c:${colorOf(id)}` }, initials(nameOf(id))))) : null),
+      el("div", { class: "boss-bar", role: "progressbar", "aria-label": "Boss health", "aria-valuemin": "0", "aria-valuemax": String(h.total), "aria-valuenow": String(h.left) }, el("i", { style: `width:${h.pct}%` })),
+      big ? null : el("span", { class: "hint" }, h.left ? `Each step anyone checks off: +${BOSS_STEP_XP} XP. Victory XP is split across everyone who landed a hit.` : "All steps done. Clear it to claim the victory XP."));
   }
 
   /* ---------- Auth + Graph ---------- */
@@ -276,7 +411,9 @@
       const { doc } = await readFile("shared"); data = doc; loaded = true;
       if (store.personal.base) { try { pdata = (await readFile("personal")).doc; } catch (e) { /* keep last copy */ } }
       if (typing()) pendingRender = true; else render();
-      if (!spawnChecked) { spawnChecked = true; maybeSpawn(); }
+      if (!spawnChecked) { spawnChecked = true; maybeSpawn().then(maybeBounty); }
+      else if (data.bounty && data.bounty.date !== todayIso()) maybeBounty();
+      else if (!data.bounty) maybeBounty();
     } catch (e) { /* keep last view */ }
   }
   document.addEventListener("focusout", () => setTimeout(() => { if (pendingRender && !typing()) { pendingRender = false; render(); } }, 50));
@@ -296,7 +433,7 @@
         doc.quests.push({ id: uid(), title: r.title, giver: r.giver || "Recurring mission", tier: r.tier, due: t, details: r.details || "",
           source: "Recurring mission", status: "open", assignees: [], credit: [], doneAt: null, createdAt: nowIso(), createdBy: "recurring",
           checklist: (r.checklist || []).map(text => ({ id: uid("c"), text, done: false })), notes: [], history: [{ at: nowIso(), by: "recurring", action: "posted", detail: "Recurring mission" }],
-          squad: !!r.squad, requiresProof: !!r.requiresProof, fromInbox: false, reviewed: true, intel: null, recurringId: r.id });
+          squad: !!r.squad, boss: !!r.boss, requiresProof: !!r.requiresProof, fromInbox: false, reviewed: true, intel: null, recurringId: r.id });
         r.lastSpawned = t; n++;
       }
     });
@@ -384,6 +521,7 @@
         el("span", { class: "nm", title: c.role || "" }, c.name, el("span", { style: "color:var(--muted)" }, ` · L${levelOf(s.xp)}${s.streak ? " · 🔥" + s.streak : ""}`)),
         el("span", { class: "pts" }, xp + " XP"), remove));
     });
+    $("shouts").replaceChildren(...shoutFeed());
     const hof = hallOfFame();
     $("hof").replaceChildren(...(hof.length ? ["HALL OF FAME: ", ...hof.map((h, i) => [i ? " · " : "", monthName(h.m) + " MVP ", el("b", {}, nameOf(h.id)), ` (${h.xp} XP)`])]
       : ["Monthly seasons: the leaderboard resets on the 1st, and each month's MVP joins the hall of fame."]));
@@ -522,6 +660,11 @@
     else if (completing !== q.id && isPersonal(q)) {
       btns.push(el("button", { class: "btn", disabled: busy || null, onclick: () => { completing = q.id; render(); setTimeout(() => { const f = $("pf-t-" + q.id); f && f.focus(); }, 30); } }, "COMPLETE ▸"));
     }
+    else if (completing !== q.id && q.boss) {
+      const h = bossHp(q);
+      if (!h.left || isAdmin) btns.push(el("button", { class: "btn" + (h.left ? "" : " solid"), disabled: lock || null, onclick: () => { completing = q.id; render(); } }, h.left ? "FORCE CLEAR ▸" : "CLAIM VICTORY ▸"));
+      if (h.left) btns.push(el("button", { class: "btn ghost", onclick: () => { openSet.add(q.id); render(); setTimeout(() => { const d = $("d-" + q.id); d && d.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, 30); } }, "⚔ ATTACK"));
+    }
     else if (completing !== q.id) {
       if (q.squad) btns.push(mine ? el("button", { class: "btn ghost", disabled: lock || null, onclick: () => act(q.id, "drop") }, "LEAVE SQUAD")
                                   : el("button", { class: "btn ghost", disabled: lock || null, onclick: () => act(q.id, "claim") }, "JOIN SQUAD"));
@@ -529,17 +672,22 @@
       else if (mine) btns.push(el("button", { class: "btn ghost", disabled: lock || null, onclick: () => act(q.id, "drop") }, "DROP"));
       if (!takenByOther || isAdmin) btns.push(el("button", { class: "btn", disabled: lock || null, onclick: () => { completing = q.id; render(); setTimeout(() => { const f = $("pf-t-" + q.id); f && f.focus(); }, 30); } }, "COMPLETE ▸"));
     }
+    if (canAssist(q)) btns.push(el("button", { class: "btn ghost" + (assisting === q.id ? " on" : ""), "aria-expanded": String(assisting === q.id), onclick: () => { assisting = assisting === q.id ? null : q.id; render(); } }, "🤝 ASSIST"));
     btns.push(el("button", { class: "btn ghost" + (replying === q.id ? " on" : ""), "aria-expanded": String(replying === q.id), onclick: () => openReply(q) }, "✉ DRAFT REPLY"));
     const px = previewXp(q);
     const reward = isPersonal(q) ? el("span", { class: "reward", style: "color:var(--intel)" }, "PRIVATE", el("small", { style: "color:var(--muted)" }, "NOT ON LEADERBOARD"))
       : done
-      ? el("span", { class: "reward" }, `+${awards(q).reduce((s, a) => s + a.xp, 0)} XP`, q.credit.length > 1 ? el("small", {}, `SPLIT ${q.credit.length} WAYS`) : null)
-      : el("span", { class: "reward" }, `+${px.base} XP`, q.due ? el("small", {}, `+${px.bonus} IF ON TIME`) : null, q.squad && q.assignees.length > 1 ? el("small", {}, `EACH · ${q.assignees.length} IN SQUAD`) : null);
+      ? el("span", { class: "reward" }, `+${clearsOf(awards(q)).reduce((s, a) => s + a.xp, 0)} XP`, q.credit.length > 1 ? el("small", {}, `SPLIT ${q.credit.length} WAYS`) : null)
+      : q.boss ? el("span", { class: "reward" }, `+${BOSS_STEP_XP} / STEP`, el("small", {}, `+${tierOf(q).xp} VICTORY, SPLIT`))
+      : el("span", { class: "reward" + (isBountyToday(q) ? " bounty" : "") }, `+${px.base} XP`, isBountyToday(q) ? el("small", {}, "2× BOUNTY TODAY") : null, q.due ? el("small", {}, `+${px.bonus} IF ON TIME`) : null, q.squad && q.assignees.length > 1 ? el("small", {}, `EACH · ${q.assignees.length} IN SQUAD`) : null);
 
     const meta = el("div", { class: "q-meta" },
       el("span", { class: "chip tier" }, t.label), dueChip(q), whoChips(q),
       q.fromInbox && !q.reviewed ? el("span", { class: "chip new" }, "NEW FROM INBOX") : null,
       q.squad ? el("span", { class: "chip squad" }, "SQUAD") : null,
+      q.boss ? el("span", { class: "chip bosschip" }, "BOSS FIGHT") : null,
+      isBountyToday(q) ? el("span", { class: "chip bountychip" }, "💰 BOUNTY · 2× XP TODAY") : null,
+      ...(q.assists || []).map(a => el("span", { class: "chip who", style: `--c:${colorOf(a.to)}`, title: a.note || "" }, "🤝 " + nameOf(a.to).toUpperCase())),
       q.checklist.length ? el("span", { class: "chip" + (clDone === q.checklist.length ? " ok" : "") }, `☑ ${clDone}/${q.checklist.length}`) : null,
       q.requiresProof && !done ? el("span", { class: "chip" }, "NEEDS PROOF") : null,
       q.notes.length ? el("span", { class: "chip" }, `✎ ${q.notes.length}`) : null,
@@ -571,7 +719,7 @@
             el("div", { class: "hint" }, `Logged by ${nameOf(q.proof.by)} · ${fmtWhen(q.proof.at)}`))) : null,
         (q.checklist.length || editCl) ? el("div", { class: "dsec" }, el("span", { class: "flabel" }, "CHECKLIST"),
           el("ul", { class: "cl" }, q.checklist.map(c => el("li", { class: c.done ? "done" : "" },
-            el("label", {}, el("input", { type: "checkbox", checked: c.done || null, disabled: !joined() || done || busy || null, onchange: () => toggleStep(q.id, c.id) }), el("span", {}, c.text)),
+            el("label", {}, el("input", { type: "checkbox", checked: c.done || null, disabled: !joined() || done || busy || (q.boss && c.done && c.by !== myId && !isAdmin) || null, onchange: () => toggleStep(q.id, c.id) }), el("span", {}, c.text)),
             el("span", { class: "x" }, c.done && c.by ? nameOf(c.by) : "", editCl && isAdmin ? el("button", { class: "btn ghost small", style: "margin-left:6px", "aria-label": "Remove step", onclick: () => removeStep(q.id, c.id) }, "✕") : null)))),
           editCl ? el("form", { class: "inline", onsubmit: (e) => { e.preventDefault(); addStep(q.id); } }, inputDraft("cl-" + q.id, { maxlength: 120, placeholder: "Add a step" }), el("button", { class: "btn ghost small", type: "submit" }, "ADD")) : null) : null,
         el("div", { class: "dsec" }, el("span", { class: "flabel" }, `NOTES (${q.notes.length})`),
@@ -593,11 +741,11 @@
           ? [el("span", { class: "err" }, "Delete this quest for good?"), el("button", { class: "btn danger small", onclick: () => deleteQuest(q.id) }, "DELETE"), el("button", { class: "btn ghost small", onclick: () => { confirmQ = null; render(); } }, "KEEP")]
           : el("button", { class: "btn ghost small", onclick: () => { confirmQ = q.id; render(); } }, "DELETE QUEST"));
     }
-    return el("article", { class: "quest" + (done ? " is-done" : ""), "data-tier": q.tier },
-      el("div", { class: "q-main" }, meta, el("h3", { class: "q-title" }, q.title), el("div", { class: "q-giver" }, "Quest giver: ", el("b", {}, q.giver || "—"))),
+    return el("article", { class: "quest" + (done ? " is-done" : "") + (q.boss && !done ? " is-boss" : "") + (isBountyToday(q) ? " is-bounty" : ""), "data-tier": q.tier, id: "q-" + q.id },
+      el("div", { class: "q-main" }, meta, el("h3", { class: "q-title" }, q.title), el("div", { class: "q-giver" }, "Quest giver: ", el("b", {}, q.giver || "—")), q.boss && !done ? bossBar(q) : null),
       el("div", { class: "q-side" }, reward, el("div", { class: "q-btns" }, btns)),
-      intel, proofForm, replying === q.id ? replyBox(q) : null,
-      el("button", { class: "toggle", "aria-expanded": String(isOpen), "aria-controls": "d-" + q.id, onclick: () => { isOpen ? openSet.delete(q.id) : openSet.add(q.id); render(); } }, isOpen ? "▾ HIDE BRIEFING" : "▸ MISSION BRIEFING · NOTES · CHECKLIST"),
+      intel, proofForm, assisting === q.id ? assistBox(q) : null, replying === q.id ? replyBox(q) : null,
+      el("button", { class: "toggle", "aria-expanded": String(isOpen), "aria-controls": "d-" + q.id, onclick: () => { isOpen ? openSet.delete(q.id) : openSet.add(q.id); render(); } }, isOpen ? "▾ HIDE BRIEFING" : q.boss && !done ? "▸ BOSS CHECKLIST · BRIEFING · NOTES" : "▸ MISSION BRIEFING · NOTES · CHECKLIST"),
       drawer, admin);
   }
   function renderList() {
@@ -606,6 +754,11 @@
     if (!loaded) { list.append(el("div", { class: "empty" }, el("h2", {}, "Loading the quest board…"), el("p", {}, "Fetching quests from SharePoint."))); return; }
     if (!joined()) list.append(el("div", { class: "empty" }, el("h2", {}, "Join the crew to play"), el("p", {}, "Pick your role and color in the panel above, then claim your first quest.")));
     if (!allQ().length) { list.append(el("div", { class: "empty" }, el("h2", {}, "No quests on the board"), el("p", {}, isAdmin ? "Post the first quest with the admin form above." : "New quests appear here when your manager posts them."))); return; }
+    const banners = [goalBanner()];
+    const bq = bountyQuest();
+    if (bq) banners.push(el("div", { class: "bountybar" }, el("b", {}, "💰 TODAY'S BOUNTY"), el("span", {}, bq.title), el("span", { class: "hint" }, `2× XP (+${tierOf(bq).xp * BOUNTY_MULT}) if it's cleared today`),
+      el("button", { class: "btn small", onclick: () => { filter = "all"; openSet.add(bq.id); render(); setTimeout(() => { const n = $("q-" + bq.id); n && n.scrollIntoView({ block: "center", behavior: "smooth" }); }, 40); } }, "SHOW ME")));
+    banners.filter(Boolean).forEach(b => list.append(b));
     const shown = filtered();
     if (!shown.length) {
       const msg = { mine: ["No claimed quests", "Claim a quest and it shows up here."], done: ["Nothing cleared yet", "Complete a quest and it shows up here with its XP."],
@@ -645,11 +798,12 @@
     $("kpis").replaceChildren(...kp.map(([l, v]) => el("div", { class: "kpi" }, el("b", { style: l === "OVERDUE NOW" && v ? "color:var(--urgent)" : "" }, v), el("span", {}, l))));
     const rows = data.crew.map(c => {
       const mine = aw.filter(a => a.id === c.id);
-      return { c, n: mine.length, xp: mine.reduce((s, a) => s + a.xp, 0), on: mine.length ? Math.round(mine.filter(a => a.onTime).length / mine.length * 100) : null, s: stats(c.id),
+      const cl = clearsOf(mine);
+      return { c, n: cl.length, as: mine.filter(a => a.kind === "assist").length, xp: mine.reduce((s, a) => s + a.xp, 0), on: cl.length ? Math.round(cl.filter(a => a.onTime).length / cl.length * 100) : null, s: stats(c.id),
         open: open.filter(q => q.assignees.includes(c.id)).length };
     }).sort((a, b) => b.xp - a.xp);
-    $("perf").replaceChildren(rows.length ? el("table", {}, el("thead", {}, el("tr", {}, ["PLAYER", "ROLE", "CLEARED", "XP", "ON TIME", "STREAK", "CLAIMED NOW", "LEVEL"].map((h, i) => el("th", { class: i >= 2 ? "num" : "" }, h)))),
-      el("tbody", {}, rows.map(r => el("tr", {}, el("td", {}, r.c.name), el("td", {}, r.c.role || "—"), el("td", { class: "num" }, r.n), el("td", { class: "num" }, r.xp),
+    $("perf").replaceChildren(rows.length ? el("table", {}, el("thead", {}, el("tr", {}, ["PLAYER", "ROLE", "CLEARED", "ASSISTS", "XP", "ON TIME", "STREAK", "CLAIMED NOW", "LEVEL"].map((h, i) => el("th", { class: i >= 2 ? "num" : "" }, h)))),
+      el("tbody", {}, rows.map(r => el("tr", {}, el("td", {}, r.c.name), el("td", {}, r.c.role || "—"), el("td", { class: "num" }, r.n), el("td", { class: "num" }, r.as), el("td", { class: "num" }, r.xp),
         el("td", { class: "num" }, r.on === null ? "—" : r.on + "%"), el("td", { class: "num" }, r.s.streak), el("td", { class: "num" }, r.open), el("td", { class: "num" }, levelOf(r.s.xp))))))
       : el("p", { class: "hint" }, "No crew yet."));
     const openSorted = [...open].sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999"));
@@ -666,6 +820,10 @@
       `- ${open.length} still open${overdue.length ? `, ${overdue.length} overdue: ${overdue.map(q => q.title).join("; ")}` : ", none overdue"}.`,
       fromInbox ? `- ${fromInbox} quests were added automatically from the inbox.` : null,
       upsExc ? `- ${upsExc} UPS shipment${upsExc > 1 ? "s" : ""} had an exception; ${shipAlerts().length} still need${shipAlerts().length === 1 ? "s" : ""} attention.` : null,
+      goalStatus() ? `- Crew goal this week: ${goalStatus().cleared} of ${goalStatus().target} quests${goalStatus().met ? " (met!)" : ""}${data.goal.reward ? `, reward: ${data.goal.reward}` : ""}.` : null,
+      (() => { const b = aw.filter(a => a.kind === "clear" && a.bounty).map(a => a.q.id); return b.length ? `- Daily bounties cleared: ${new Set(b).size}.` : null; })(),
+      (() => { const n = aw.filter(a => a.kind === "assist").length; return n ? `- Assists given: ${n}.` : null; })(),
+      (() => { const n = new Set(aw.filter(a => a.kind === "clear" && a.q.boss).map(a => a.q.id)).size; return n ? `- Boss fights defeated: ${n}.` : null; })(),
       top.length ? `- Top performers: ${top.join(", ")}.` : null,
     ].filter(Boolean);
     $("summary").textContent = lines.join("\n");
@@ -694,7 +852,7 @@
   $("r-cadence").onchange = syncCadence; syncCadence();
   function syncRepeat() {
     const personal = $("q-board").value === "personal";
-    $("q-repeat-f").hidden = personal; $("q-squad-l").hidden = personal; if (personal) $("q-repeat").value = "";
+    $("q-repeat-f").hidden = personal; $("q-squad-l").hidden = personal; $("q-boss-l").hidden = personal; if (personal) $("q-repeat").value = "";
     const c = $("q-repeat").value; $("q-weekday-f").hidden = c !== "weekly"; $("q-day-f").hidden = c !== "monthly"; $("q-repeat-hint").hidden = !c; }
   $("q-repeat").onchange = syncRepeat; $("q-board").onchange = syncRepeat; syncRepeat();
 
@@ -775,9 +933,17 @@
       const ua = (a.tier === "urgent" || (da !== null && da <= 0)) ? 0 : 1, ub = (b.tier === "urgent" || (dbb !== null && dbb <= 0)) ? 0 : 1;
       return ua - ub || sortQ(a, b);
     }).slice(0, 8);
-    $("tvq").replaceChildren(...(open.length ? open.map(q => el("div", { class: "tvq", style: `--tier:${tierOf(q).color}` },
+    const open2 = open.filter(q => !q.boss);
+    $("tvq").replaceChildren(...(open2.length ? open2.slice(0, 7).map(q => el("div", { class: "tvq", style: `--tier:${tierOf(q).color}` },
       el("div", { class: "q-meta" }, el("span", { class: "chip tier", style: `--tier:${tierOf(q).color}` }, tierOf(q).label), dueChip(q), whoChips(q)),
       el("h3", {}, q.title))) : [el("div", { class: "empty" }, el("h2", {}, "Board clear"), el("p", {}, "No open missions. Nice work, crew."))]));
+    const bosses = data.quests.filter(q => q.boss && q.status !== "done");
+    $("tvboss").replaceChildren(...bosses.slice(0, 2).map(q => el("div", { class: "tvq tvbossq" }, el("h3", {}, "⚔ " + q.title), bossBar(q, true))));
+    const bq = bountyQuest();
+    $("tvbounty").replaceChildren(...(bq ? [el("div", { class: "bountybar tvb" }, el("b", {}, "💰 TODAY'S BOUNTY · 2× XP"), el("span", {}, bq.title))] : []));
+    $("tvgoal").replaceChildren(...[goalBanner(true)].filter(Boolean));
+    const sh = shoutFeed(true);
+    $("tvshouts").replaceChildren(...(sh.length ? [el("div", { class: "tvh" }, el("span", {}, "SHOUT-OUTS"))].concat(el("ul", { class: "shouts tv" }, sh)) : []));
     const m = monthKey(nowIso());
     $("tvlbTitle").textContent = "SEASON · " + monthName(m).toUpperCase();
     $("tvlb").replaceChildren(...ranking(m).slice(0, 8).map(({ c, xp, s }, i) => el("li", {},
@@ -837,6 +1003,7 @@
   }
   function creditFor(q) {
     if (isPersonal(q)) return [myId];
+    if (q.boss) { const f = [...new Set(q.checklist.filter(c => c.done && c.by).map(c => c.by))]; if (!f.includes(myId) && !isAdmin) f.push(myId); return f.length ? f : [myId]; }
     if (q.squad) { const s = [...q.assignees]; if (!isAdmin && !s.includes(myId)) s.push(myId); return s.length ? s : [myId]; }
     if (isAdmin && q.assignees.length) return [...q.assignees];
     return [myId];
@@ -849,14 +1016,14 @@
     let credited = [], gained = 0;
     const ok = await withQuest(id, (q) => {
       if (q.status === "done") { toast("Already cleared."); return false; }
-      if (!isPersonal(q) && !q.squad && q.assignees.length && !q.assignees.includes(myId) && !isAdmin) { toast("That quest is claimed by someone else."); return false; }
+      if (!isPersonal(q) && !q.squad && !q.boss && q.assignees.length && !q.assignees.includes(myId) && !isAdmin) { toast("That quest is claimed by someone else."); return false; }
       credited = creditFor(q);
       q.status = "done"; q.credit = credited; q.doneAt = nowIso();
       if (!q.assignees.length) q.assignees = [...credited];
       q.proof = (tracking || note) ? { tracking, note, by: myId, at: nowIso() } : null;
       if (intelProof) q.intel = null;
       log(q, "cleared it", tracking ? "tracking " + tracking : (intelProof ? "confirmed Claude's intel" : ""));
-      gained = awards(q).find(a => a.id === myId)?.xp || 0;
+      gained = awards(q).filter(a => a.id === myId && a.kind === "clear").reduce((t, a) => t + a.xp, 0);
     });
     if (!ok) return;
     completing = null; clearDrafts("pf-t-" + id, "pf-n-" + id); render();
@@ -890,7 +1057,14 @@
     if (await withQuest(id, q => { if (!canEditQuest(q)) return false; q.checklist.push({ id: uid("c"), text: text.slice(0, 120), done: false }); log(q, "added a step", text); })) { clearDrafts("cl-" + id); render(); }
   }
   async function toggleStep(id, stepId) {
-    await withQuest(id, q => { const c = q.checklist.find(x => x.id === stepId); if (!c) return false; c.done = !c.done; c.by = c.done ? myId : null; log(q, c.done ? "checked off" : "unchecked", c.text); });
+    let hit = false;
+    await withQuest(id, q => {
+      const c = q.checklist.find(x => x.id === stepId); if (!c) return false;
+      if (q.boss && c.done && c.by && c.by !== myId && !isAdmin) { toast("Only the person who landed that hit can undo it."); return false; }
+      c.done = !c.done; c.by = c.done ? myId : null; c.at = c.done ? nowIso() : null; hit = q.boss && c.done;
+      log(q, c.done ? (q.boss ? "hit the boss" : "checked off") : "unchecked", c.text);
+    });
+    if (hit) toast(`HIT! +${BOSS_STEP_XP} XP`);
   }
   async function removeStep(id, stepId) { await withQuest(id, q => { const n = q.checklist.length; q.checklist = q.checklist.filter(x => x.id !== stepId); if (q.checklist.length === n) return false; }); }
   async function toggleRecurring(rid) { await mutate(doc => { const r = doc.recurring.find(x => x.id === rid); if (!r) return false; r.active = !r.active; }); }
@@ -916,19 +1090,24 @@
     const q = { id: uid(), title, giver: $("q-giver").value.trim(), tier: $("q-tier").value, due: $("q-due").value || null, details: $("q-details").value.trim(),
       source: "Posted on the board by " + (myName || myEmail), status: "open", assignees: [], credit: [], doneAt: null, createdAt: nowIso(), createdBy: myId,
       checklist: steps.map(text => ({ id: uid("c"), text, done: false })), notes: [], history: [{ at: nowIso(), by: myId, action: "posted it", detail: "" }],
-      squad: $("q-squad").checked, requiresProof: $("q-proof").checked, fromInbox: false, reviewed: true, intel: null };
+      squad: $("q-squad").checked, boss: $("q-boss").checked, requiresProof: $("q-proof").checked, fromInbox: false, reviewed: true, intel: null };
     const board = $("q-board").value;
+    if (q.boss) {
+      if (board === "personal") q.boss = false;
+      else if (steps.length < 2) { $("q-msg").className = "err"; $("q-msg").textContent = "A boss fight needs at least 2 checklist steps (one per line). Each step is a hit."; return; }
+      else q.squad = false;
+    }
     if (board === "personal") q.squad = false;
     const repeat = board === "personal" ? "" : $("q-repeat").value;
     let tmpl = null;
     if (repeat) {
       tmpl = { id: uid("r"), title, giver: q.giver, tier: q.tier, cadence: repeat, weekday: Number($("q-weekday").value), day: Math.min(28, Math.max(1, Number($("q-day").value) || 1)),
-        details: q.details, checklist: steps, squad: q.squad, requiresProof: q.requiresProof, active: true, lastSpawned: todayIso(), createdAt: nowIso() };
+        details: q.details, checklist: steps, squad: q.squad, boss: q.boss, requiresProof: q.requiresProof, active: true, lastSpawned: todayIso(), createdAt: nowIso() };
       q.recurringId = tmpl.id; q.source = "Recurring mission (" + cadenceText(tmpl).replace(/^E/, "e").replace(/^M/, "m") + ")";
       if (!q.due) q.due = todayIso();
     }
     if (await mutate(doc => { doc.quests.push(q); if (tmpl) doc.recurring.push(tmpl); }, board)) {
-      ["q-title","q-giver","q-due","q-details","q-checklist"].forEach(id => $(id).value = ""); $("q-proof").checked = false; $("q-squad").checked = false;
+      ["q-title","q-giver","q-due","q-details","q-checklist"].forEach(id => $(id).value = ""); $("q-proof").checked = false; $("q-squad").checked = false; $("q-boss").checked = false;
       $("q-repeat").value = ""; syncRepeat();
       $("q-msg").className = "hint"; $("q-msg").textContent = tmpl ? `Quest posted. It will repeat ${cadenceText(tmpl).replace(/^E/, "e").replace(/^M/, "m")}.` : "Quest posted.";
       toast(board === "personal" ? "ADDED TO YOUR PERSONAL LIST" : tmpl ? "RECURRING QUEST POSTED" : "QUEST POSTED");
