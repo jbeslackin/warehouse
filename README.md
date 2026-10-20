@@ -65,6 +65,7 @@ Optional: add the site URL as a **Website** tab in the warehouse Teams channel.
 | Area | Features |
 |---|---|
 | Work tracking | Proof of completion (a tracking number or note; required on quests flagged "needs proof"), notes on each quest, activity history, a link back to the source email |
+| Draft replies | A **Draft reply** button on every quest opens an editable reply (to, subject, message) built from the quest's current status, proof and UPS tracking, or Claude's draft from the email thread when there is one. Copy it into the original thread or open it as a new Outlook message. Nothing is sent from the app, and it needs no extra permissions |
 | Game layer | XP by tier, +25% for clearing on or before the due date, workday streaks, 8 badges, monthly seasons with a hall of fame, an all-time leaderboard |
 | Warehouse ops | Recurring missions (every workday, weekly or monthly; they post themselves), checklists, squad quests (several people, XP split), TV mode |
 | UPS Tracker | Exceptions, claims, deliveries and labels from the Warehouse mailbox, with timelines, acknowledge and one-click quests |
@@ -91,6 +92,7 @@ The admin tools are hidden from everyone else on the page. The real permission b
     "checklist": [{ "id": "c1", "text": "…", "done": false, "by": null }],
     "notes": [{ "id": "n1", "by": "<id>", "at": "…", "text": "…" }],
     "history": [{ "at": "…", "by": "<id or claude>", "action": "…", "detail": "…" }],
+    "replyTo": "<sender email or null>", "replyDraft": { "to": "…", "subject": "RE: …", "body": "…", "at": "…" },
     "fromInbox": true, "reviewed": false,
     "intel": { "text": "UPS shows delivered Fri 10/16 9:45 AM", "link": "<Outlook link>", "at": "…" },
     "createdAt": "…", "createdBy": "<id | claude | recurring>", "recurringId": null
@@ -107,6 +109,7 @@ XP, levels, streaks, badges and seasons are all computed from completed quests, 
 - Emails from the **Warehouse mailbox** become quests in `warehouse-commander.json` (SharePoint). Emails from **Jordon's own inbox** become quests in Jordon's `my-personal-quests.json` (OneDrive), which only he sees. Jordon can move any quest between the two with one click.
 - Personal quests are private and don't count on the crew leaderboard; warehouse quests earn XP as usual.
 - New quests get `fromInbox: true`, `reviewed: false`, `createdBy: "claude"`, a `sourceLink`, and a `history` entry. Claude skips anything already on the board (matched by job number or email thread).
+- Claude also fills `replyTo` with the sender's address and writes a suggested `replyDraft` in Jordon's voice. The app shows it under **Draft reply**; once a quest is cleared, the app builds the reply from the proof instead.
 - When it finds evidence that a quest is finished, Claude sets `intel` on that quest. It never marks a quest done by itself; a person confirms with **Confirm & clear**.
 - Claude never edits `crew`, `credit`, `assignees`, `notes` or `proof`.
 

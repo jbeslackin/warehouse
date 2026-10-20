@@ -46,6 +46,7 @@
   let view = "board", filter = "all", lbMode = "season", dbMode = "week";
   let openSet = new Set(), completing = null, pickColor = COLORS[0], editing = false;
   let confirmQ = null, confirmP = null, confirmR = null, lastLevel = null;
+  let replying = null;
   const drafts = {};
   let ledger = [], statsCache = {};
   const $ = (id) => document.getElementById(id);
@@ -443,6 +444,74 @@
   }
   function clearDrafts(...ids) { ids.forEach(i => delete drafts[i]); }
 
+  /* ---------- Draft replies ---------- */
+  const firstWord = (s) => (s || "").trim().split(/[\s\/(,]+/)[0] || "";
+  function greetingFor(q) {
+    const f = firstWord(q.giver);
+    if (!f || /^(ups|fedex|usps|finance|dhl|the)$/i.test(f) || f === f.toUpperCase()) return "Hello,";
+    return `Hi ${f},`;
+  }
+  function replySubject(q) {
+    if (q.replyDraft && q.replyDraft.subject) return q.replyDraft.subject;
+    const src = (q.source || "").replace(/^(warehouse inbox|calendar)\s*:\s*/i, "").trim();
+    const base = src && !/^posted on the board/i.test(src) && !/^ups tracker$/i.test(src) ? src : q.title;
+    return /^re:/i.test(base) ? base : "RE: " + base;
+  }
+  function replyBody(q) {
+    if (q.replyDraft && q.replyDraft.body && q.status !== "done") return q.replyDraft.body;
+    const ships = (data.shipments || []).filter(s => s.questId === q.id);
+    const lines = [greetingFor(q), ""];
+    const by = q.due ? fmtDate(q.due) : null;
+    if (q.status === "done") {
+      lines.push("Quick update: this is taken care of.");
+      if (q.proof && q.proof.tracking) lines.push(`Tracking / confirmation: ${q.proof.tracking}`);
+    } else if (q.intel && q.intel.text) {
+      lines.push(`Quick update: ${q.intel.text}`);
+    } else if (q.assignees.length && !isPersonal(q)) {
+      lines.push(`Quick update: we're working on this${by ? ` and are on track for ${by}` : ""}.`);
+    } else {
+      lines.push(`Thanks for sending this. We've got it${by ? ` and will have it done by ${by}` : ""}.`);
+    }
+    if (ships.length && q.intel) lines.push(`UPS tracking: ${ships.map(s => s.tracking).join(", ")}`);
+    else ships.forEach(s => lines.push(`UPS ${s.tracking}: ${s.lastText || SHIP_ST[s.status].label.toLowerCase()}`));
+    lines.push("", "Let me know if you need anything else.", "", "Thanks,", firstWord(myName) || "", "Wyanoke Campus Logistics");
+    return lines.join("\n");
+  }
+  function openReply(q) {
+    replying = replying === q.id ? null : q.id;
+    if (replying) {
+      const k = (f) => `rp-${f}-${q.id}`;
+      if (drafts[k("to")] === undefined) drafts[k("to")] = (q.replyDraft && q.replyDraft.to) || q.replyTo || "";
+      if (drafts[k("su")] === undefined) drafts[k("su")] = replySubject(q);
+      if (drafts[k("bo")] === undefined) drafts[k("bo")] = replyBody(q);
+    }
+    render();
+  }
+  async function copyReply(id) {
+    const t = drafts["rp-bo-" + id] || "";
+    try { await navigator.clipboard.writeText(t); toast("REPLY COPIED. PASTE IT INTO OUTLOOK"); } catch (e) { toast("SELECT THE TEXT AND COPY IT"); }
+  }
+  function outlookLink(id) {
+    const enc = encodeURIComponent;
+    return "https://outlook.office.com/mail/deeplink/compose?to=" + enc(drafts["rp-to-" + id] || "") + "&subject=" + enc(drafts["rp-su-" + id] || "") + "&body=" + enc(drafts["rp-bo-" + id] || "");
+  }
+  function replyBox(q) {
+    const k = (f) => `rp-${f}-${q.id}`;
+    return el("div", { class: "replybox" },
+      el("h4", {}, "DRAFT REPLY", q.replyDraft && q.replyDraft.body && q.status !== "done" ? el("span", { class: "chip new", style: "margin-left:8px" }, "WRITTEN BY CLAUDE FROM THE THREAD") : null),
+      el("div", { class: "fields" },
+        el("div", { class: "field" }, el("label", { for: k("to") }, "TO"), inputDraft(k("to"), { maxlength: 300, placeholder: "name@company.com (optional)" })),
+        el("div", { class: "field" }, el("label", { for: k("su") }, "SUBJECT"), inputDraft(k("su"), { maxlength: 200 }))),
+      el("div", { class: "field" }, el("label", { for: k("bo") }, "MESSAGE"), inputDraft(k("bo"), { multiline: true, rows: 9, maxlength: 4000 })),
+      el("span", { class: "hint" }, "Nothing is sent from here. Edit it, then copy it into the original email thread, or open it as a new Outlook message."),
+      el("div", { class: "q-btns" },
+        el("button", { type: "button", class: "btn ghost small", onclick: () => { [k("to"), k("su"), k("bo")].forEach(i => delete drafts[i]); replying = null; render(); } }, "CLOSE"),
+        el("button", { type: "button", class: "btn ghost small", title: "Start over from the current quest status", onclick: () => { [k("to"), k("su"), k("bo")].forEach(i => delete drafts[i]); replying = null; openReply(q); } }, "RESET"),
+        q.sourceLink ? el("a", { class: "btn ghost small", href: q.sourceLink, target: "_blank", rel: "noopener" }, "OPEN ORIGINAL EMAIL ↗") : null,
+        el("button", { type: "button", class: "btn small", onclick: () => copyReply(q.id) }, "COPY REPLY"),
+        el("a", { class: "btn solid small", href: "#", target: "_blank", rel: "noopener", onclick: (e) => { e.currentTarget.href = outlookLink(q.id); } }, "OPEN IN OUTLOOK ↗")));
+  }
+
   function card(q) {
     const t = tierOf(q), done = q.status === "done", isOpen = openSet.has(q.id);
     const lock = !joined() || busy, mine = isMine(q);
@@ -460,6 +529,7 @@
       else if (mine) btns.push(el("button", { class: "btn ghost", disabled: lock || null, onclick: () => act(q.id, "drop") }, "DROP"));
       if (!takenByOther || isAdmin) btns.push(el("button", { class: "btn", disabled: lock || null, onclick: () => { completing = q.id; render(); setTimeout(() => { const f = $("pf-t-" + q.id); f && f.focus(); }, 30); } }, "COMPLETE ▸"));
     }
+    btns.push(el("button", { class: "btn ghost" + (replying === q.id ? " on" : ""), "aria-expanded": String(replying === q.id), onclick: () => openReply(q) }, "✉ DRAFT REPLY"));
     const px = previewXp(q);
     const reward = isPersonal(q) ? el("span", { class: "reward", style: "color:var(--intel)" }, "PRIVATE", el("small", { style: "color:var(--muted)" }, "NOT ON LEADERBOARD"))
       : done
@@ -526,7 +596,7 @@
     return el("article", { class: "quest" + (done ? " is-done" : ""), "data-tier": q.tier },
       el("div", { class: "q-main" }, meta, el("h3", { class: "q-title" }, q.title), el("div", { class: "q-giver" }, "Quest giver: ", el("b", {}, q.giver || "—"))),
       el("div", { class: "q-side" }, reward, el("div", { class: "q-btns" }, btns)),
-      intel, proofForm,
+      intel, proofForm, replying === q.id ? replyBox(q) : null,
       el("button", { class: "toggle", "aria-expanded": String(isOpen), "aria-controls": "d-" + q.id, onclick: () => { isOpen ? openSet.delete(q.id) : openSet.add(q.id); render(); } }, isOpen ? "▾ HIDE BRIEFING" : "▸ MISSION BRIEFING · NOTES · CHECKLIST"),
       drawer, admin);
   }

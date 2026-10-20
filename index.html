@@ -177,6 +177,11 @@ textarea { min-height: 70px; resize: vertical; }
 .hist { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 13px; color: var(--muted); }
 .hist time { font-family: var(--f-pixel); font-size: 9px; margin-right: 6px; }
 .proofbox { grid-column: 1 / -1; display: grid; gap: 8px; background: color-mix(in srgb, var(--done) 7%, var(--well)); border: 1px solid color-mix(in srgb, var(--done) 40%, transparent); border-radius: 4px; padding: 12px; }
+.replybox { grid-column: 1 / -1; display: grid; gap: 8px; background: color-mix(in srgb, var(--intel) 7%, var(--well)); border: 1px solid color-mix(in srgb, var(--intel) 40%, transparent); border-radius: var(--radius-sm, 4px); padding: 12px; }
+.replybox h4 { margin: 0; font-family: var(--f-pixel); font-size: 11px; letter-spacing: .08em; color: var(--intel); font-weight: 400; display: flex; align-items: center; flex-wrap: wrap; }
+.replybox textarea { width: 100%; min-height: 170px; resize: vertical; font: inherit; line-height: 1.45; }
+.replybox .q-btns { justify-content: flex-end; flex-wrap: wrap; }
+.btn.on { border-color: var(--intel); color: var(--intel); }
 .proofbox h4 { margin: 0; font-family: var(--f-pixel); font-size: 11px; letter-spacing: .08em; color: var(--done); font-weight: 400; }
 .proof { font-size: 14px; }
 .proof b { font-family: var(--f-pixel); font-size: 10px; color: var(--done); letter-spacing: .06em; font-weight: 400; margin-right: 6px; }
