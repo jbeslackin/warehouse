@@ -633,6 +633,20 @@
     const enc = encodeURIComponent;
     return "https://outlook.office.com/mail/deeplink/compose?to=" + enc(drafts["rp-to-" + id] || "") + "&subject=" + enc(drafts["rp-su-" + id] || "") + "&body=" + enc(drafts["rp-bo-" + id] || "");
   }
+  /* mailto: opens the computer's default mail app (desktop Outlook when it's the default).
+   * Windows caps these links at about 2,000 characters, so a long message goes via the clipboard. */
+  const MAILTO_MAX = 1900;
+  async function openDesktop(id) {
+    const enc = (t) => encodeURIComponent(t).replace(/%0A/g, "%0D%0A");
+    const to = (drafts["rp-to-" + id] || "").split(/[;,]\s*/).filter(Boolean).join(";"), su = drafts["rp-su-" + id] || "", bo = drafts["rp-bo-" + id] || "";
+    const head = "mailto:" + encodeURIComponent(to).replace(/%3B/g, ";").replace(/%40/g, "@") + "?subject=" + enc(su);
+    let url = head + "&body=" + enc(bo);
+    if (url.length > MAILTO_MAX) {
+      url = head;
+      try { await navigator.clipboard.writeText(bo); toast("MESSAGE COPIED. PASTE IT INTO THE OUTLOOK WINDOW"); } catch (e) { toast("MESSAGE TOO LONG FOR A LINK. COPY IT FIRST, THEN PASTE"); }
+    }
+    window.location.href = url;
+  }
   function replyBox(q) {
     const k = (f) => `rp-${f}-${q.id}`;
     return el("div", { class: "replybox" },
@@ -641,13 +655,14 @@
         el("div", { class: "field" }, el("label", { for: k("to") }, "TO"), inputDraft(k("to"), { maxlength: 300, placeholder: "name@company.com (optional)" })),
         el("div", { class: "field" }, el("label", { for: k("su") }, "SUBJECT"), inputDraft(k("su"), { maxlength: 200 }))),
       el("div", { class: "field" }, el("label", { for: k("bo") }, "MESSAGE"), inputDraft(k("bo"), { multiline: true, rows: 9, maxlength: 4000 })),
-      el("span", { class: "hint" }, "Nothing is sent from here. Edit it, then copy it into the original email thread, or open it as a new Outlook message."),
+      el("span", { class: "hint" }, "Nothing is sent from here. Open in Outlook starts a new message in the Outlook app on this computer. To keep it in the same thread, open the original email, click Reply and paste."),
       el("div", { class: "q-btns" },
         el("button", { type: "button", class: "btn ghost small", onclick: () => { [k("to"), k("su"), k("bo")].forEach(i => delete drafts[i]); replying = null; render(); } }, "CLOSE"),
         el("button", { type: "button", class: "btn ghost small", title: "Start over from the current quest status", onclick: () => { [k("to"), k("su"), k("bo")].forEach(i => delete drafts[i]); replying = null; openReply(q); } }, "RESET"),
         q.sourceLink ? el("a", { class: "btn ghost small", href: q.sourceLink, target: "_blank", rel: "noopener" }, "OPEN ORIGINAL EMAIL ↗") : null,
         el("button", { type: "button", class: "btn small", onclick: () => copyReply(q.id) }, "COPY REPLY"),
-        el("a", { class: "btn solid small", href: "#", target: "_blank", rel: "noopener", onclick: (e) => { e.currentTarget.href = outlookLink(q.id); } }, "OPEN IN OUTLOOK ↗")));
+        el("a", { class: "btn ghost small", href: "#", target: "_blank", rel: "noopener", title: "Outlook in the browser", onclick: (e) => { e.currentTarget.href = outlookLink(q.id); } }, "OUTLOOK WEB ↗"),
+        el("button", { type: "button", class: "btn solid small", onclick: () => openDesktop(q.id) }, "OPEN IN OUTLOOK ▸")));
   }
 
   function card(q) {
